@@ -1,0 +1,53 @@
+services:
+  scrappergmb:
+    build: .
+    image: scrappergmb:latest
+    container_name: scrappergmb
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Brussels
+      # Intégration Ringover (téléphonie). Clé : Dashboard Ringover > Developer > API key
+      RINGOVER_API_KEY: "${RINGOVER_API_KEY:-}"
+      # Numéro du commercial pour le click-to-call (optionnel, format +32...)
+      RINGOVER_DEFAULT_NUMBER: "${RINGOVER_DEFAULT_NUMBER:-}"
+      # Enrichissement financier (optionnel)
+      NBB_API_KEY: "${NBB_API_KEY:-}"
+      COMPANYWEB_API_KEY: "${COMPANYWEB_API_KEY:-}"
+    volumes:
+      - exports:/app/data/exports
+    shm_size: "1gb"
+    mem_limit: 2g
+    cpus: 2.0
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=n8n-traefik_default"
+
+      # Routeur HTTPS
+      - "traefik.http.routers.scrappergmb.rule=Host(`gmb.mf-ia.com`)"
+      - "traefik.http.routers.scrappergmb.entrypoints=websecure"
+      - "traefik.http.routers.scrappergmb.tls=true"
+      - "traefik.http.routers.scrappergmb.tls.certresolver=myresolver"
+      - "traefik.http.services.scrappergmb.loadbalancer.server.port=8501"
+
+      # Redirection HTTP -> HTTPS
+      - "traefik.http.routers.scrappergmb-http.rule=Host(`gmb.mf-ia.com`)"
+      - "traefik.http.routers.scrappergmb-http.entrypoints=web"
+      - "traefik.http.routers.scrappergmb-http.middlewares=scrappergmb-redirect"
+      - "traefik.http.middlewares.scrappergmb-redirect.redirectscheme.scheme=https"
+
+      # Authentification basique (optionnel) — voir note dans DEPLOY.md
+      # 1. Générer le hash : htpasswd -nb commercial MotDePasse
+      # 2. Doubler chaque "$" en "$$" dans le hash collé ci-dessous
+      # 3. Décommenter les 2 lignes suivantes
+      # - "traefik.http.routers.scrappergmb.middlewares=scrappergmb-auth"
+      # - "traefik.http.middlewares.scrappergmb-auth.basicauth.users=commercial:$$apr1$$xxxxxxxx$$xxxxxxxxxxxxxxxxxxxxx."
+
+volumes:
+  exports:
+
+networks:
+  traefik:
+    name: n8n-traefik_default
+    external: true

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+data/exports/
+data/cache/
+*.xlsx
+*.log
+.playwright/
