@@ -2257,15 +2257,19 @@ with tab_results:
             # FILTRES CHIPS (style template) + barre de recherche
             # ----------------------------------------------------------------
             with_vat_count = sum(1 for b in biz_dicts if b.get("vat_number"))
+            no_vat_count = sum(1 for b in biz_dicts if not b.get("vat_number"))
             with_web_count = sum(1 for b in biz_dicts if b.get("website"))
+            no_web_count = sum(1 for b in biz_dicts if not b.get("website"))
             no_phone_count = sum(1 for b in biz_dicts if not b.get("phone"))
             top2_count = sum(1 for b in biz_dicts if (b.get("google_rank") or 0) and b["google_rank"] <= 2)
 
             filter_options = [
                 f"Tous ({len(biz_dicts)})",
-                f"Avec TVA ({with_vat_count})",
-                f"Avec site web ({with_web_count})",
                 f"Top 2 Google ({top2_count})",
+                f"Avec TVA ({with_vat_count})",
+                f"Sans TVA ({no_vat_count})",
+                f"Avec site web ({with_web_count})",
+                f"Sans site web ({no_web_count})",
                 f"Sans téléphone ({no_phone_count})",
             ]
             fc1, fc2 = st.columns([3, 2])
@@ -2297,8 +2301,12 @@ with tab_results:
             chip = chip or filter_options[0]
             if chip.startswith("Avec TVA"):
                 filtered = [b for b in biz_dicts if b.get("vat_number")]
+            elif chip.startswith("Sans TVA"):
+                filtered = [b for b in biz_dicts if not b.get("vat_number")]
             elif chip.startswith("Avec site web"):
                 filtered = [b for b in biz_dicts if b.get("website")]
+            elif chip.startswith("Sans site web"):
+                filtered = [b for b in biz_dicts if not b.get("website")]
             elif chip.startswith("Top 2 Google"):
                 filtered = [b for b in biz_dicts if (b.get("google_rank") or 0) and b["google_rank"] <= 2]
             elif chip.startswith("Sans téléphone"):
