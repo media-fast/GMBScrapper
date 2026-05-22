@@ -25,6 +25,7 @@ continue son travail indépendamment.
 """
 
 import threading
+import time
 from datetime import datetime
 from typing import Any, Callable, MutableMapping
 
@@ -45,6 +46,12 @@ PHASE_SAVING = "saving"
 PHASE_DONE = "done"
 PHASE_CANCELLED = "cancelled"
 PHASE_ERROR = "error"
+
+# Politique de retry sur échec de scrape par (métier, ville).
+# Une seule retry après 5 s — assez pour passer un CAPTCHA temporaire ou un
+# hiccup réseau, sans rallonger trop le scrape global.
+SCRAPE_MAX_RETRIES = 1
+SCRAPE_RETRY_DELAY_SEC = 5
 
 
 def init_scrape_state() -> dict:
@@ -75,6 +82,9 @@ def init_scrape_state() -> dict:
         # Erreurs de scrape par (métier, ville) — list[str] persistées dans
         # le state pour rester consultables après la fin du scrape
         "scrape_errors": [],
+        # Stats de retry (au cas où Google a hiccup temporaire)
+        "retried_count": 0,
+        "retry_succeeded_count": 0,
         "metiers": [],
         "cities": [],
         "result_search_id": None,
@@ -140,6 +150,8 @@ def _run_pipeline(
     state["result_search_id"] = None
     state["result_count"] = 0
     state["scrape_errors"] = []
+    state["retried_count"] = 0
+    state["retry_succeeded_count"] = 0
 
     def _cancelled() -> bool:
         return bool(state.get("cancel_requested", False))
@@ -172,20 +184,51 @@ def _run_pipeline(
                 def _scrape_progress(msg: str) -> None:
                     _log(msg)
 
-                try:
-                    part = scrape_google_maps(
-                        query=m,
-                        cities=[city],
-                        max_results_per_city=max_per_city,
-                        headless=headless,
-                        on_progress=_scrape_progress,
-                    )
+                # Boucle de retry : 1 tentative + SCRAPE_MAX_RETRIES réessais
+                # avec sleep entre, pour absorber CAPTCHA temporaires / hiccups
+                # réseau. Si l'utilisateur clique Annuler pendant l'attente, on
+                # sort proprement.
+                part = None
+                last_err: Exception | None = None
+                for attempt in range(SCRAPE_MAX_RETRIES + 1):
+                    if _cancelled():
+                        state["phase"] = PHASE_CANCELLED
+                        _log("Annulée pendant retry.")
+                        return
+                    try:
+                        part = scrape_google_maps(
+                            query=m,
+                            cities=[city],
+                            max_results_per_city=max_per_city,
+                            headless=headless,
+                            on_progress=_scrape_progress,
+                        )
+                        if attempt > 0:
+                            state["retry_succeeded_count"] += 1
+                            _log(f"↻ Retry réussi pour {m} × {city}")
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last_err = e
+                        if attempt < SCRAPE_MAX_RETRIES:
+                            state["retried_count"] += 1
+                            _log(f"↻ Retry {attempt + 1}/{SCRAPE_MAX_RETRIES} "
+                                 f"pour {m} × {city} dans {SCRAPE_RETRY_DELAY_SEC}s "
+                                 f"({type(e).__name__})")
+                            # Sleep en petites tranches pour rester réactif à Annuler
+                            for _ in range(SCRAPE_RETRY_DELAY_SEC):
+                                if _cancelled():
+                                    state["phase"] = PHASE_CANCELLED
+                                    _log("Annulée pendant retry.")
+                                    return
+                                time.sleep(1)
+                        # Sinon on sort de la boucle, l'erreur sera loggée plus bas
+
+                if part is not None:
                     businesses.extend(part)
                     _log(f"{m} · {city} — {len(part)} prospects (total {len(businesses)})")
-                except Exception as e:  # noqa: BLE001
-                    # On loggue l'erreur, on incrémente quand même `communes_done`
-                    # pour que la progression soit cohérente, et on continue.
-                    err_msg = f"! Erreur scrape {m} × {city} : {type(e).__name__}: {e}"
+                else:
+                    err_msg = (f"! Erreur scrape {m} × {city} : "
+                               f"{type(last_err).__name__}: {last_err}")
                     scrape_errors.append(err_msg)
                     _log(err_msg)
 
