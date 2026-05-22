@@ -150,16 +150,56 @@ def init_db() -> None:
         # remonte et déclenche un ROLLBACK automatique de TOUT init_db (schéma
         # de base inclus, mais idempotent au prochain run). Pas d'état hybride
         # mi-ancien mi-nouveau format possible.
-        old_rows = conn.execute(
-            "SELECT dedup_key, postal_code FROM businesses "
-            "WHERE dedup_key LIKE 'bce:%' AND dedup_key NOT LIKE '%|%'"
-        ).fetchall()
-        for row in old_rows:
+        #
+        # 🪶 Streaming par batchs de 500 lignes au lieu d'un fetchall global :
+        # une base avec 100k anciennes fiches ne fait plus exploser la RAM
+        # (100k tuples Python ≈ 30 Mo de pic ➜ 500 tuples ≈ 0,15 Mo de pic).
+        # La WHERE clause exclut naturellement les lignes déjà migrées
+        # (qui contiennent `|`) donc le prochain batch ne les re-fetche pas.
+        # Les rares collisions IntegrityError sont mémorisées dans `skipped`
+        # pour ne pas boucler à l'infini sur les mêmes lignes.
+        _migrate_dedup_keys_streaming(conn)
+
+
+_MIGRATION_BATCH_SIZE = 500
+
+
+def _migrate_dedup_keys_streaming(conn: sqlite3.Connection) -> None:
+    """Migre les anciennes clés `bce:XXX` → `bce:XXX|<postal>` par batchs.
+
+    Streaming via re-query à chaque batch : la WHERE clause s'auto-rétrécit
+    au fur et à mesure que les lignes sont migrées (la nouvelle clé contient
+    `|` donc ne matche plus). Les collisions sont tracées pour ne pas être
+    re-fetchées indéfiniment.
+    """
+    skipped: set[str] = set()
+    base_where = (
+        "WHERE dedup_key LIKE 'bce:%' AND dedup_key NOT LIKE '%|%'"
+    )
+    while True:
+        if skipped:
+            placeholders = ",".join("?" * len(skipped))
+            sql = (
+                f"SELECT dedup_key, postal_code FROM businesses "
+                f"{base_where} AND dedup_key NOT IN ({placeholders}) "
+                f"LIMIT ?"
+            )
+            params: tuple = (*skipped, _MIGRATION_BATCH_SIZE)
+        else:
+            sql = (
+                f"SELECT dedup_key, postal_code FROM businesses "
+                f"{base_where} LIMIT ?"
+            )
+            params = (_MIGRATION_BATCH_SIZE,)
+
+        batch = conn.execute(sql, params).fetchall()
+        if not batch:
+            return
+
+        for row in batch:
             old_key = row["dedup_key"]
             postal = (row["postal_code"] or "").strip()
             new_key = f"{old_key}|{postal}"
-            if new_key == old_key:
-                continue
             try:
                 conn.execute(
                     "UPDATE businesses SET dedup_key = ? WHERE dedup_key = ?",
@@ -170,8 +210,9 @@ def init_db() -> None:
                     (new_key, old_key),
                 )
             except sqlite3.IntegrityError:
-                # Collision rare (2 lignes dont la new_key existe déjà) :
-                # on saute cette ligne, le reste de la transaction continue.
+                # Collision rare (la new_key existe déjà). On mémorise pour
+                # ne pas la re-fetcher au prochain batch (sinon boucle infinie).
+                skipped.add(old_key)
                 continue
 
 
