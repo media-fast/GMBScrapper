@@ -64,12 +64,14 @@ def enrich_business_with_vat(
     use_bce_detail: bool = True,
     use_financial: bool = True,
 ) -> Business:
-    # 1. Site web : TVA + email pro
+    # 1. Site web : TVA + email pro + téléphone (fallback si Google Maps n'en a pas)
     if use_website and business.website:
         try:
             contact = fetch_website_contact(business.website)
             if contact.email and not business.email:
                 business.email = contact.email
+            if contact.phone and not business.phone:
+                business.phone = contact.phone
             if contact.vat:
                 business.vat_number = contact.vat
                 business.bce_number = _vat_to_bce(contact.vat)

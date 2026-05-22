@@ -35,6 +35,84 @@ LEGAL_PAGES = [
 class WebsiteContact:
     vat: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+# Pattern téléphone belge tolérant : +32 / 0032 / 0 + 8-9 chiffres avec
+# séparateurs variés (espace, point, tiret, slash, parenthèses).
+BELGIAN_PHONE_RE = re.compile(
+    r"(?:(?:\+|00)\s*32|\b0)"           # +32, 0032 ou 0
+    r"[\s\-./()]*"                       # séparateur(s)
+    r"\d(?:[\s\-./()]*\d){7,9}",         # 8-10 chiffres
+)
+
+# Petits indices "tel" / "phone" / "tél" pour booster la confiance autour d'un match
+PHONE_HINT_RE = re.compile(
+    r"(?:t[ée]l(?:[ée]phone)?|phone|appel|contact)\s*[:\-]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _normalize_phone(raw: str) -> Optional[str]:
+    """Renvoie un numéro belge au format `+32XXXXXXXXX` ou None si invalide."""
+    digits = re.sub(r"\D", "", raw or "")
+    if not digits:
+        return None
+    if digits.startswith("0032"):
+        digits = digits[2:]
+    if digits.startswith("32"):
+        # 32 + 8-9 chiffres nationaux = 10-11 chars
+        if 10 <= len(digits) <= 11:
+            return "+" + digits
+        return None
+    if digits.startswith("0"):
+        nat = digits[1:]
+        if 8 <= len(nat) <= 9:
+            return "+32" + nat
+    return None
+
+
+def _extract_phone(html: str, soup: Optional[BeautifulSoup] = None) -> Optional[str]:
+    """Cherche un téléphone belge dans la page : tel:… > regex texte.
+
+    Stratégie :
+      1. `<a href="tel:…">` (source la plus fiable)
+      2. Regex sur le texte brut, avec scoring si "tél"/"phone" proches
+    """
+    if soup is None:
+        soup = BeautifulSoup(html, "html.parser")
+
+    # 1) Liens tel: — quasi 100 % fiables
+    for a in soup.find_all("a", href=True):
+        href = a["href"].lower()
+        if href.startswith("tel:") or href.startswith("callto:"):
+            raw = a["href"].split(":", 1)[1].strip()
+            normalized = _normalize_phone(raw)
+            if normalized:
+                return normalized
+
+    # 2) Texte visible (rapide) puis HTML brut (fallback)
+    text_blob = soup.get_text(" ", strip=True)
+    candidates: list[tuple[str, int]] = []  # (numéro normalisé, score de confiance)
+
+    for source in (text_blob, html):
+        for m in BELGIAN_PHONE_RE.finditer(source):
+            raw = m.group(0)
+            normalized = _normalize_phone(raw)
+            if not normalized:
+                continue
+            # Score : présence d'un mot-clé dans les 30 chars précédents
+            start = max(0, m.start() - 40)
+            window = source[start : m.start()]
+            score = 2 if PHONE_HINT_RE.search(window) else 1
+            candidates.append((normalized, score))
+
+    if not candidates:
+        return None
+
+    # Trier par score décroissant, prendre le 1er
+    candidates.sort(key=lambda x: -x[1])
+    return candidates[0][0]
 
 
 def _normalize_vat(raw: str) -> str:
@@ -110,6 +188,7 @@ def fetch_website_contact(website: str, timeout: float = 8.0) -> WebsiteContact:
                 soup = BeautifulSoup(home.text, "html.parser")
                 result.vat = result.vat or _extract_vat_from_text(home.text)
                 result.email = result.email or _extract_email(home.text, soup)
+                result.phone = result.phone or _extract_phone(home.text, soup)
                 for a in soup.find_all("a", href=True):
                     href = a["href"].lower()
                     text = (a.get_text() or "").lower()
@@ -121,7 +200,7 @@ def fetch_website_contact(website: str, timeout: float = 8.0) -> WebsiteContact:
             pass
 
         for url in candidate_urls[1:]:
-            if result.vat and result.email:
+            if result.vat and result.email and result.phone:
                 break
             try:
                 r = client.get(url)
@@ -129,6 +208,7 @@ def fetch_website_contact(website: str, timeout: float = 8.0) -> WebsiteContact:
                     continue
                 result.vat = result.vat or _extract_vat_from_text(r.text)
                 result.email = result.email or _extract_email(r.text)
+                result.phone = result.phone or _extract_phone(r.text)
             except Exception:
                 continue
 
