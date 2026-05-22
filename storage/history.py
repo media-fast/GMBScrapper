@@ -140,6 +140,33 @@ def init_db() -> None:
                 """
             )
 
+        # Migration : ancienne clé BCE `bce:0123456789` → nouvelle clé
+        # `bce:0123456789|<postal>` pour distinguer les magasins de chaîne.
+        # Idempotent : les clés déjà au nouveau format (contenant `|`) sont
+        # ignorées. Les anciennes lignes sans postal deviennent `bce:...|`.
+        old_rows = conn.execute(
+            "SELECT dedup_key, postal_code FROM businesses "
+            "WHERE dedup_key LIKE 'bce:%' AND dedup_key NOT LIKE '%|%'"
+        ).fetchall()
+        for row in old_rows:
+            old_key = row["dedup_key"]
+            postal = (row["postal_code"] or "").strip()
+            new_key = f"{old_key}|{postal}"
+            if new_key == old_key:
+                continue
+            try:
+                conn.execute(
+                    "UPDATE businesses SET dedup_key = ? WHERE dedup_key = ?",
+                    (new_key, old_key),
+                )
+                conn.execute(
+                    "UPDATE search_businesses SET dedup_key = ? WHERE dedup_key = ?",
+                    (new_key, old_key),
+                )
+            except sqlite3.IntegrityError:
+                # Collision potentielle (rare) : on laisse l'ancienne ligne intacte
+                continue
+
 
 def _norm(s: str) -> str:
     s = unicodedata.normalize("NFD", s or "")
@@ -161,12 +188,20 @@ def phone_key(raw: str) -> str:
 
 
 def dedup_key(business: Business) -> str:
+    """Clé d'unicité d'une fiche (entité × emplacement).
+
+    On INCLUT le code postal même quand le BCE est connu, sinon les chaînes
+    (Pearle Waterloo / Pearle Liège partagent BE0424.735.977) sont fusionnées
+    en une seule fiche, ce qui est faux pour de la prospection commerciale :
+    chaque magasin physique = un prospect distinct (manager, téléphone, RDV
+    différents).
+    """
+    postal = (business.postal_code or "").strip()
     if business.bce_number:
         digits = re.sub(r"\D", "", business.bce_number)
         if len(digits) == 10:
-            return f"bce:{digits}"
+            return f"bce:{digits}|{postal}"
     name = _norm(business.name)
-    postal = (business.postal_code or "").strip()
     return f"nm:{name}|{postal}"
 
 

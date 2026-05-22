@@ -25,7 +25,7 @@ from integrations import (
     ringover_csv,
     sync_call_statuses,
 )
-from scraper import filter_by_city, scrape_google_maps
+from scraper import expand_metier_synonyms, filter_by_city, scrape_google_maps
 from audit import run_full_audit
 from data import (
     ARRONDISSEMENTS,
@@ -1693,7 +1693,25 @@ with st.container(border=True):
         placeholder="ex : magasin de vélos, salle de sport, traiteur",
     )
     custom_metiers = [m.strip() for m in custom_metiers_raw.split(",") if m.strip()]
-    metiers = list(dict.fromkeys(selected_metiers + custom_metiers))  # dédup, ordre conservé
+    metiers_base = list(dict.fromkeys(selected_metiers + custom_metiers))  # dédup, ordre conservé
+
+    # Toggle : étendre chaque métier avec ses synonymes (ex. opticien → lunetterie,
+    # magasin de lunettes, optique). Multiplie le rendement Google Maps mais aussi
+    # le temps de scrape.
+    use_synonyms = st.toggle(
+        "Inclure les variantes du métier (recommandé)",
+        value=True,
+        help="Pour chaque métier, lance aussi les recherches sur ses synonymes "
+             "(ex. opticien → lunetterie, magasin de lunettes…). Multiplie typiquement "
+             "le nombre de prospects trouvés par 2-3.",
+    )
+    metiers = expand_metier_synonyms(metiers_base, enabled=use_synonyms)
+    if use_synonyms and len(metiers) > len(metiers_base):
+        st.caption(
+            f"**{len(metiers_base)} métier(s) saisi(s)** → **{len(metiers)} requêtes** "
+            f"après expansion synonymes : `{', '.join(metiers[:6])}"
+            f"{('…' if len(metiers) > 6 else '')}`"
+        )
 
     # --- ZONE DE PROSPECTION ---
     st.markdown("")
@@ -1807,16 +1825,34 @@ with st.container(border=True):
     # --- FOOTER : estimate + submit ---
     st.markdown("")
     nb_combos = len(metiers) * len(cities)
-    estimate = nb_combos * (30 if unlimited else min(max_per_city, 30))
-    estimate_min = max(1, int(estimate * 0.35 / 60))
+    cap = 30 if unlimited else min(max_per_city, 30)
+
+    # Estimation réaliste sous forme de FOURCHETTE :
+    # - haut (optimiste) : Google donne ~70 % du cap, peu de pertes
+    # - bas (pessimiste) : ~30 % après filtre ville strict + dédup + filtre tél
+    yield_high = 0.65 if strict_city else 0.80
+    yield_low = 0.25 if strict_city else 0.40
+    if require_phone:
+        yield_high *= 0.85
+        yield_low *= 0.85
+    estimate_high = int(nb_combos * cap * yield_high)
+    estimate_low = int(nb_combos * cap * yield_low)
+
+    # Estimation temps : ~5-8 s par fiche scrapée (incluant l'enrichissement parallèle)
+    raw_fiches = int(nb_combos * cap * 0.7)
+    time_min = max(1, int(raw_fiches * 6 / 60))
+
     foot1, foot2 = st.columns([2, 1])
     with foot1:
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:14px;">'
             f'<div>'
-            f'<div class="estimate-num">~ {estimate}</div>'
-            f'<div class="estimate-label">prospects estimés · ~{estimate_min} min '
-            f'· {len(metiers)} métier(s) × {len(cities)} commune(s)</div>'
+            f'<div class="estimate-num">{estimate_low}–{estimate_high}</div>'
+            f'<div class="estimate-label">prospects estimés · ~{time_min} min '
+            f'· {len(metiers)} requête(s) × {len(cities)} commune(s) '
+            f'<span style="opacity:0.6;">'
+            f'({"strict" if strict_city else "tolérant"}'
+            f'{", tel obligatoire" if require_phone else ""})</span></div>'
             f'</div></div>',
             unsafe_allow_html=True,
         )
