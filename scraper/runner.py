@@ -72,6 +72,9 @@ def init_scrape_state() -> dict:
         },
         "last_log": "",
         "log_lines": [],
+        # Erreurs de scrape par (métier, ville) — list[str] persistées dans
+        # le state pour rester consultables après la fin du scrape
+        "scrape_errors": [],
         "metiers": [],
         "cities": [],
         "result_search_id": None,
@@ -136,6 +139,7 @@ def _run_pipeline(
     state["error"] = None
     state["result_search_id"] = None
     state["result_count"] = 0
+    state["scrape_errors"] = []
 
     def _cancelled() -> bool:
         return bool(state.get("cancel_requested", False))
@@ -145,7 +149,9 @@ def _run_pipeline(
 
     try:
         businesses = []
-        scrape_errors: list[str] = []
+        # `scrape_errors` est ré-exposé dans le state (init ci-dessus) pour
+        # rester visible dans le panel Done après la fin du scrape.
+        scrape_errors = state["scrape_errors"]
         # --- Scraping ville par ville (granularité fine pour la progression) ---
         # try/except par (métier, ville) : si UN scrape plante (Playwright
         # crash, timeout, CAPTCHA, etc.), on log l'erreur et on continue avec
@@ -195,6 +201,16 @@ def _run_pipeline(
                  f"({len(scrape_errors)} villes en erreur, ignorées).")
         else:
             _log(f"Scraping terminé : {len(businesses)} fiches brutes.")
+
+        # Cas extrême : 100 % d'échec → on bascule en PHASE_ERROR plutôt que
+        # PHASE_DONE qui afficherait un panel vert trompeur.
+        if scrape_errors and not businesses:
+            state["phase"] = PHASE_ERROR
+            state["error"] = (
+                f"Toutes les {len(scrape_errors)} requêtes ont échoué. "
+                f"Voir le détail des erreurs ci-dessous."
+            )
+            return
 
         # --- Filtre ville ---
         dropped = []

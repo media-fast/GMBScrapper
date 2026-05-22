@@ -2030,6 +2030,31 @@ def _render_done_panel(slot, state: dict) -> None:
             f'</div>'
         )
 
+    # Bloc d'erreurs de scrape (pliable, visible seulement si scrape_errors non vide)
+    scrape_errors = state.get("scrape_errors") or []
+    err_block = ""
+    if scrape_errors:
+        err_items = "".join(
+            f'<li style="margin:0.25rem 0;font-family:SF Mono,Monaco,monospace;'
+            f'font-size:0.74rem;color:rgba(255,255,255,0.75);">'
+            f'{_safe_html(err)}</li>'
+            for err in scrape_errors[:25]
+        )
+        more_note = (f'<div style="font-size:0.72rem;color:rgba(255,255,255,0.55);'
+                     f'margin-top:0.4rem;">… et {len(scrape_errors) - 25} autres</div>'
+                     if len(scrape_errors) > 25 else "")
+        err_block = (
+            f'<details style="margin-top:0.9rem;padding-top:0.8rem;'
+            f'border-top:1px solid rgba(255,255,255,0.18);">'
+            f'<summary style="cursor:pointer;font-size:0.72rem;letter-spacing:0.06em;'
+            f'text-transform:uppercase;color:rgba(255,255,255,0.7);font-weight:600;">'
+            f'⚠ {len(scrape_errors)} requête(s) en erreur (cliquer pour détails)'
+            f'</summary>'
+            f'<ul style="margin:0.6rem 0 0 1rem;padding:0;list-style:disc;">'
+            f'{err_items}</ul>{more_note}'
+            f'</details>'
+        )
+
     slot.markdown(
         f'<section class="progress-panel" style="background:linear-gradient(135deg,#0F6B36,#1F9D55);">'
         f'<div class="pp-head"><div class="pp-title-wrap">'
@@ -2049,6 +2074,7 @@ def _render_done_panel(slot, state: dict) -> None:
         f'<div class="pp-value" style="font-size:1.2rem;">✓ Terminé</div></div>'
         f'</div>'
         f'{loss_block}'
+        f'{err_block}'
         f'</section>',
         unsafe_allow_html=True,
     )
