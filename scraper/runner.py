@@ -145,7 +145,11 @@ def _run_pipeline(
 
     try:
         businesses = []
+        scrape_errors: list[str] = []
         # --- Scraping ville par ville (granularité fine pour la progression) ---
+        # try/except par (métier, ville) : si UN scrape plante (Playwright
+        # crash, timeout, CAPTCHA, etc.), on log l'erreur et on continue avec
+        # la ville suivante au lieu de tout perdre.
         for m in metiers:
             if _cancelled():
                 state["phase"] = PHASE_CANCELLED
@@ -162,23 +166,35 @@ def _run_pipeline(
                 def _scrape_progress(msg: str) -> None:
                     _log(msg)
 
-                part = scrape_google_maps(
-                    query=m,
-                    cities=[city],
-                    max_results_per_city=max_per_city,
-                    headless=headless,
-                    on_progress=_scrape_progress,
-                )
-                businesses.extend(part)
+                try:
+                    part = scrape_google_maps(
+                        query=m,
+                        cities=[city],
+                        max_results_per_city=max_per_city,
+                        headless=headless,
+                        on_progress=_scrape_progress,
+                    )
+                    businesses.extend(part)
+                    _log(f"{m} · {city} — {len(part)} prospects (total {len(businesses)})")
+                except Exception as e:  # noqa: BLE001
+                    # On loggue l'erreur, on incrémente quand même `communes_done`
+                    # pour que la progression soit cohérente, et on continue.
+                    err_msg = f"! Erreur scrape {m} × {city} : {type(e).__name__}: {e}"
+                    scrape_errors.append(err_msg)
+                    _log(err_msg)
+
                 state["communes_done"] += 1
                 # prospects_brut = total scrapé sur Google (monotone)
                 # prospects_found = pareil pendant le scrape, sera décrémenté
                 # par chaque filtre qui suit
                 state["prospects_brut"] = len(businesses)
                 state["prospects_found"] = len(businesses)
-                _log(f"{m} · {city} — {len(part)} prospects (total {len(businesses)})")
 
-        _log(f"Scraping terminé : {len(businesses)} fiches brutes.")
+        if scrape_errors:
+            _log(f"Scraping terminé : {len(businesses)} fiches brutes "
+                 f"({len(scrape_errors)} villes en erreur, ignorées).")
+        else:
+            _log(f"Scraping terminé : {len(businesses)} fiches brutes.")
 
         # --- Filtre ville ---
         dropped = []
