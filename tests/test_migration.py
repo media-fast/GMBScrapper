@@ -143,3 +143,71 @@ class TestDedupKeyMigration:
         with sqlite3.connect(toy_db) as conn:
             keys = [r[0] for r in conn.execute("SELECT dedup_key FROM businesses")]
         assert keys == ["nm:foo|1410"]
+
+    def test_streaming_handles_more_than_batch_size(self, toy_db, monkeypatch):
+        """Vérifie que la migration en streaming traite > BATCH_SIZE lignes.
+
+        Avec un BATCH_SIZE réduit à 5, on insère 12 lignes en ancien format.
+        Si le streaming est correct (re-query qui s'auto-rétrécit), toutes
+        doivent être migrées. Si on était resté en fetchall() global,
+        ce test passerait quand même — c'est la non-régression qu'on protège.
+        """
+        # Réduit la taille de batch pour tester la boucle de pagination
+        monkeypatch.setattr(history, "_MIGRATION_BATCH_SIZE", 5)
+
+        # 12 lignes en ancien format avec BCE distincts
+        with sqlite3.connect(toy_db) as conn:
+            for i in range(12):
+                bce = f"04247359{i:02d}"  # BCE 10 chiffres uniques
+                conn.execute(
+                    "INSERT INTO businesses (dedup_key, postal_code, name) "
+                    "VALUES (?, ?, ?)",
+                    (f"bce:{bce}", "1410", f"Biz {i}"),
+                )
+            conn.commit()
+
+        history.init_db()
+
+        with sqlite3.connect(toy_db) as conn:
+            rows = list(conn.execute(
+                "SELECT dedup_key FROM businesses ORDER BY dedup_key"
+            ))
+        keys = [r[0] for r in rows]
+        # Toutes les 12 lignes doivent être migrées
+        assert len(keys) == 12
+        assert all("|1410" in k for k in keys), f"Keys non migrées : {keys}"
+        assert all(k.startswith("bce:") for k in keys)
+
+    def test_streaming_skips_collisions_without_infinite_loop(self, toy_db, monkeypatch):
+        """Vérifie qu'une collision IntegrityError ne fait pas boucler à l'infini.
+
+        On insère 2 lignes : `bce:X` (ancien format, postal=1410) et
+        `bce:X|1410` (nouveau format, postal=1410). Quand la migration tente
+        de transformer `bce:X` en `bce:X|1410`, IntegrityError → la ligne
+        est skipée. Le streaming doit s'arrêter, pas boucler à l'infini.
+        """
+        monkeypatch.setattr(history, "_MIGRATION_BATCH_SIZE", 2)
+
+        with sqlite3.connect(toy_db) as conn:
+            conn.execute(
+                "INSERT INTO businesses (dedup_key, postal_code, name) "
+                "VALUES (?, ?, ?)",
+                ("bce:0424735977|1410", "1410", "Déjà migré"),
+            )
+            conn.execute(
+                "INSERT INTO businesses (dedup_key, postal_code, name) "
+                "VALUES (?, ?, ?)",
+                ("bce:0424735977", "1410", "Collision"),
+            )
+            conn.commit()
+
+        # Si la boucle est mal écrite, ce call hang indéfiniment
+        history.init_db()
+
+        with sqlite3.connect(toy_db) as conn:
+            keys = sorted(r[0] for r in conn.execute(
+                "SELECT dedup_key FROM businesses"
+            ))
+        # La ligne en collision est restée en ancien format (skipée)
+        # La ligne déjà migrée est intacte
+        assert keys == ["bce:0424735977", "bce:0424735977|1410"]
