@@ -1956,6 +1956,15 @@ def _render_progress_panel(slot, state: dict) -> None:
     meta = (f"Phase : {phase_text} · Lancée il y a "
             f"{_format_duration(started)} · {len(cities)} communes × {len(metiers)} métiers")
 
+    # 2 compteurs distincts : bruts (monotone) vs après filtres (décroît)
+    brut = state.get("prospects_brut", 0)
+    found_html = (
+        f'<span class="pp-value">{prospects}</span>'
+        if prospects == brut
+        else f'<span class="pp-value">{prospects}</span>'
+             f'<span class="pp-sm" style="color:rgba(255,255,255,0.55);">/ {brut} bruts</span>'
+    )
+
     slot.markdown(
         f'<section class="progress-panel">'
         f'<div class="pp-head"><div class="pp-title-wrap">'
@@ -1966,8 +1975,8 @@ def _render_progress_panel(slot, state: dict) -> None:
         f'<div class="pp-stats">'
         f'<div><div class="pp-label">Communes traitées</div>'
         f'<div class="pp-value">{communes_done}<span class="pp-sm">/ {communes_total}</span></div></div>'
-        f'<div><div class="pp-label">Prospects trouvés</div>'
-        f'<div class="pp-value">{prospects}</div></div>'
+        f'<div><div class="pp-label">Prospects (après filtres)</div>'
+        f'<div>{found_html}</div></div>'
         f'<div><div class="pp-label">Enrichissement TVA</div>'
         f'<div class="pp-value">{vat}<span class="pp-sm">/ {prospects}</span></div></div>'
         f'<div><div class="pp-label">Temps restant</div>'
@@ -1981,29 +1990,66 @@ def _render_progress_panel(slot, state: dict) -> None:
 
 
 def _render_done_panel(slot, state: dict) -> None:
-    """Panel vert 'Recherche terminée'."""
+    """Panel vert 'Recherche terminée' avec breakdown détaillé des pertes."""
     communes_total = state.get("communes_total", 0)
-    prospects = state.get("result_count", 0)
+    brut = state.get("prospects_brut", 0)
+    final = state.get("result_count", 0)
     vat = state.get("vat_enriched", 0)
     duration = _format_duration(state.get("started_at"), state.get("ended_at"))
+    losses = state.get("losses") or {}
+
+    # Construction de la breakdown des pertes (uniquement les non-nulles)
+    LOSS_LABELS = {
+        "city_filter": "hors zone (filtre ville)",
+        "dedup_seen": "déjà connues (dédup historique)",
+        "dedup_post_bce": "doublons BCE révélés après enrichissement",
+        "dedup_intra": "chaînes (même BCE + même localité)",
+        "phone_filter": "sans téléphone (filtre obligatoire)",
+    }
+    loss_lines = []
+    for key, label in LOSS_LABELS.items():
+        n = losses.get(key, 0)
+        if n > 0:
+            loss_lines.append(
+                f'<div style="display:flex;justify-content:space-between;'
+                f'padding:3px 0;font-size:0.78rem;">'
+                f'<span style="color:rgba(255,255,255,0.7);">– {label}</span>'
+                f'<span style="font-weight:600;">−{n}</span>'
+                f'</div>'
+            )
+    loss_block = ""
+    if loss_lines and brut > final:
+        loss_block = (
+            f'<div style="margin-top:1rem;padding-top:0.8rem;'
+            f'border-top:1px solid rgba(255,255,255,0.18);">'
+            f'<div style="font-size:0.7rem;letter-spacing:0.08em;'
+            f'text-transform:uppercase;color:rgba(255,255,255,0.55);'
+            f'font-weight:600;margin-bottom:0.5rem;">'
+            f'Détail des {brut - final} fiches écartées</div>'
+            + "".join(loss_lines) +
+            f'</div>'
+        )
 
     slot.markdown(
         f'<section class="progress-panel" style="background:linear-gradient(135deg,#0F6B36,#1F9D55);">'
         f'<div class="pp-head"><div class="pp-title-wrap">'
         f'<span class="pp-pulse" style="background:#FFF;animation:none;box-shadow:none;"></span>'
         f'<div class="pp-title"><h3>Recherche terminée</h3>'
-        f'<div class="pp-meta">{communes_total} communes traitées en {duration}</div>'
+        f'<div class="pp-meta">{communes_total} communes traitées en {duration} · '
+        f'{brut} bruts → <strong>{final} finaux</strong></div>'
         f'</div></div></div>'
         f'<div class="pp-stats">'
         f'<div><div class="pp-label">Communes traitées</div>'
         f'<div class="pp-value">{communes_total}</div></div>'
-        f'<div><div class="pp-label">Prospects trouvés</div>'
-        f'<div class="pp-value">{prospects}</div></div>'
+        f'<div><div class="pp-label">Prospects finaux</div>'
+        f'<div class="pp-value">{final}<span class="pp-sm">/ {brut} bruts</span></div></div>'
         f'<div><div class="pp-label">Enrichissement TVA</div>'
-        f'<div class="pp-value">{vat}<span class="pp-sm">/ {prospects}</span></div></div>'
+        f'<div class="pp-value">{vat}<span class="pp-sm">/ {final}</span></div></div>'
         f'<div><div class="pp-label">Statut</div>'
         f'<div class="pp-value" style="font-size:1.2rem;">✓ Terminé</div></div>'
-        f'</div></section>',
+        f'</div>'
+        f'{loss_block}'
+        f'</section>',
         unsafe_allow_html=True,
     )
 

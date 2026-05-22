@@ -56,10 +56,20 @@ def init_scrape_state() -> dict:
         "ended_at": None,
         "communes_done": 0,
         "communes_total": 0,
-        "prospects_found": 0,
+        # Compteurs distincts pour la transparence (cf. _render_*_panel)
+        "prospects_brut": 0,        # Fiches brutes scrapées sur Google (monotone)
+        "prospects_found": 0,       # Fiches restantes après chaque filtre (décroît)
         "vat_enriched": 0,
         "skipped_count": 0,
         "dropped_count": 0,
+        # Détail des pertes par étape (pour le panneau Terminé)
+        "losses": {
+            "city_filter": 0,        # filtrage strict par ville
+            "dedup_seen": 0,         # déjà connues dans l'historique
+            "dedup_post_bce": 0,     # doublons révélés post-enrichissement BCE
+            "dedup_intra": 0,        # mêmes BCE + même postal dans le même batch
+            "phone_filter": 0,       # téléphone obligatoire
+        },
         "last_log": "",
         "log_lines": [],
         "metiers": [],
@@ -107,10 +117,18 @@ def _run_pipeline(
     state["ended_at"] = None
     state["communes_total"] = len(metiers) * len(cities)
     state["communes_done"] = 0
+    state["prospects_brut"] = 0
     state["prospects_found"] = 0
     state["vat_enriched"] = 0
     state["skipped_count"] = 0
     state["dropped_count"] = 0
+    state["losses"] = {
+        "city_filter": 0,
+        "dedup_seen": 0,
+        "dedup_post_bce": 0,
+        "dedup_intra": 0,
+        "phone_filter": 0,
+    }
     state["log_lines"] = []
     state["last_log"] = "Démarrage…"
     state["metiers"] = list(metiers)
@@ -153,6 +171,10 @@ def _run_pipeline(
                 )
                 businesses.extend(part)
                 state["communes_done"] += 1
+                # prospects_brut = total scrapé sur Google (monotone)
+                # prospects_found = pareil pendant le scrape, sera décrémenté
+                # par chaque filtre qui suit
+                state["prospects_brut"] = len(businesses)
                 state["prospects_found"] = len(businesses)
                 _log(f"{m} · {city} — {len(part)} prospects (total {len(businesses)})")
 
@@ -164,6 +186,8 @@ def _run_pipeline(
             state["phase"] = PHASE_FILTERING
             businesses, dropped = filter_by_city(businesses)
             state["dropped_count"] = len(dropped)
+            state["losses"]["city_filter"] = len(dropped)
+            state["prospects_found"] = len(businesses)
             _log(f"Filtre ville : {len(businesses)} gardées, {len(dropped)} hors zone.")
 
         # --- Dédup historique ---
@@ -174,6 +198,8 @@ def _run_pipeline(
             skipped = [b for b in businesses if b.already_seen]
             businesses = [b for b in businesses if not b.already_seen]
             state["skipped_count"] = len(skipped)
+            state["losses"]["dedup_seen"] = len(skipped)
+            state["prospects_found"] = len(businesses)
             if skipped:
                 _log(f"Dédup historique : {len(skipped)} déjà connues écartées.")
 
@@ -207,6 +233,8 @@ def _run_pipeline(
                 skipped += newly
                 businesses = [b for b in businesses if not b.already_seen]
                 state["skipped_count"] = len(skipped)
+                state["losses"]["dedup_post_bce"] = len(newly)
+                state["prospects_found"] = len(businesses)
                 _log(f"Dédup post-BCE : {len(newly)} doublons supplémentaires écartés.")
 
         # --- Dédup intra-batch ---
@@ -218,9 +246,12 @@ def _run_pipeline(
                 continue
             seen_keys.add(k)
             unique.append(b)
-        if len(unique) != len(businesses):
-            _log(f"Dédup intra-batch : {len(businesses) - len(unique)} doublons fusionnés.")
+        intra_dupes = len(businesses) - len(unique)
+        if intra_dupes:
+            state["losses"]["dedup_intra"] = intra_dupes
+            _log(f"Dédup intra-batch : {intra_dupes} doublons fusionnés.")
         businesses = unique
+        state["prospects_found"] = len(businesses)
 
         # --- Filtre téléphone obligatoire ---
         if require_phone:
@@ -228,6 +259,8 @@ def _run_pipeline(
             businesses = [b for b in businesses if b.phone]
             removed = before - len(businesses)
             if removed:
+                state["losses"]["phone_filter"] = removed
+                state["prospects_found"] = len(businesses)
                 _log(f"Filtre téléphone : {removed} fiches sans tél écartées.")
 
         # --- Sauvegarde ---
