@@ -43,13 +43,18 @@ async def _scroll_results(page: Page, max_results: int) -> None:
 
     last_count = 0
     stable_iterations = 0
-    for _ in range(40):
+    # Pour récupérer "tout" : plus d'itérations + tolérance d'attente plus longue
+    # avant de conclure que Google n'a plus rien à montrer.
+    max_iterations = 80 if max_results > 100 else 40
+    max_stable = 5 if max_results > 100 else 3
+
+    for _ in range(max_iterations):
         cards = await page.locator(RESULT_CARD_SELECTOR).count()
         if cards >= max_results:
             return
         if cards == last_count:
             stable_iterations += 1
-            if stable_iterations >= 3:
+            if stable_iterations >= max_stable:
                 return
         else:
             stable_iterations = 0

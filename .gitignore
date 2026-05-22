@@ -6,6 +6,9 @@ venv/
 .streamlit/secrets.toml
 data/exports/
 data/cache/
+data/*.db
+data/*.db-journal
 *.xlsx
 *.log
 .playwright/
+st_boot.log

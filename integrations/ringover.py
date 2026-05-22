@@ -22,7 +22,58 @@ import httpx
 from storage import mark_called_by_phones
 
 
-API_BASE = "https://public-api.ringover.com/v2"
+API_BASE = "https://public-api.ringover.com/v3"
+
+
+# ---------------------------------------------------------------------------
+# Parsing du champ "managers" (issu de la BCE/KBO)
+# ---------------------------------------------------------------------------
+
+_TITLE_RE = re.compile(r"^(?:M\.|Mme|Mr\.?|Mrs\.?|Madame|Monsieur|Dhr\.?|Mevr\.?)\s+",
+                       re.IGNORECASE)
+_ROLE_SUFFIX_RE = re.compile(
+    r"\s*(?:[-,(]|·)\s*(?:g[ée]rant(?:e)?|administrateur(?:.trice)?|"
+    r"directeur(?:.trice)?|pr[ée]sident(?:e)?|associ[ée](?:.e)?|"
+    r"co[-\s]?g[ée]rant(?:e)?|d[ée]l[ée]gu[ée](?:e)?|bestuurder|zaakvoerder)"
+    r"\b.*$",
+    re.IGNORECASE,
+)
+
+
+def split_manager_name(raw: str) -> tuple[str, str]:
+    """Sépare un dirigeant en (prénom, nom).
+
+    Heuristique :
+    - prend le premier dirigeant si plusieurs (séparés par ; ou ,)
+    - retire les titres (M., Mme…) et les rôles en suffixe (gérant…)
+    - si certains tokens sont en MAJUSCULES (typique KBO) → ce sont les noms
+    - sinon → premier token = prénom, reste = nom
+    """
+    if not raw:
+        return ("", "")
+    first = re.split(r"[;/]|,\s*(?=[A-ZÀ-Ÿ])", raw, maxsplit=1)[0].strip()
+    first = _TITLE_RE.sub("", first)
+    first = _ROLE_SUFFIX_RE.sub("", first)
+    first = first.strip(" ,.-—–")
+    if not first:
+        return ("", "")
+
+    tokens = [t for t in first.split() if t]
+    if not tokens:
+        return ("", "")
+    if len(tokens) == 1:
+        # Un seul token : on le met comme nom de famille
+        return ("", tokens[0])
+
+    # Repère les tokens en MAJUSCULES (au moins 2 lettres) — typique KBO "DUPONT John"
+    upper_tokens = [t for t in tokens if len(t) >= 2 and t == t.upper() and any(c.isalpha() for c in t)]
+    if upper_tokens and len(upper_tokens) < len(tokens):
+        lastname = " ".join(upper_tokens)
+        firstname = " ".join(t for t in tokens if t not in upper_tokens)
+        return (firstname.strip().title(), lastname.strip())
+
+    # Sinon : premier token = prénom, suite = nom
+    return (tokens[0].title(), " ".join(t.title() for t in tokens[1:]))
 PHONE_IN_TEXT_RE = re.compile(r"\+?\d[\d ().\-]{7,}\d")
 
 
@@ -160,26 +211,45 @@ def click_to_call(to_number: str, from_number: Optional[str] = None) -> dict:
 # 4. Push de contacts
 # --------------------------------------------------------------------------
 
-def _contact_payload(business: dict) -> Optional[dict]:
-    phone = _to_e164(business.get("phone") or "")
-    if not phone:
+def _phone_to_int(phone: str) -> Optional[int]:
+    """Ringover v3 attend un numéro en integer (pas de + ni de séparateurs)."""
+    digits = re.sub(r"\D", "", phone or "")
+    if not digits:
         return None
-    name = (business.get("name") or "").strip() or "Entreprise"
-    notes_bits = []
-    if business.get("managers"):
-        notes_bits.append(f"Dirigeant(s): {business['managers']}")
-    if business.get("vat_number"):
-        notes_bits.append(f"TVA: {business['vat_number']}")
-    if business.get("city"):
-        notes_bits.append(f"Ville: {business['city']}")
-    return {
-        "firstname": "",
-        "lastname": name,
-        "company": name,
-        "numbers": [{"type": "office", "number": phone}],
-        "emails": [business["email"]] if business.get("email") else [],
-        "notes": " | ".join(notes_bits),
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("0"):
+        digits = "32" + digits.lstrip("0")
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _contact_payload(business: dict) -> Optional[dict]:
+    """Construit le dict d'un contact pour l'API Ringover v3 ({contacts:[...]}).
+
+    Prénom / Nom = dirigeant extrait du champ managers (BCE/KBO).
+    Si pas de dirigeant identifié, le nom de l'entreprise sert de lastname.
+    """
+    phone_int = _phone_to_int(business.get("phone") or "")
+    if not phone_int:
+        return None
+    company = (business.get("name") or "").strip() or "Entreprise"
+
+    firstname, lastname = split_manager_name(business.get("managers") or "")
+    if not lastname:
+        lastname = company
+
+    payload = {
+        "lastname": lastname[:80],
+        "company": company[:80],
+        "numbers": [{"number": phone_int, "type": "office"}],
+        "is_shared": True,
     }
+    if firstname:
+        payload["firstname"] = firstname[:80]
+    return payload
 
 
 def push_contacts(businesses: list[dict]) -> dict:
@@ -190,31 +260,38 @@ def push_contacts(businesses: list[dict]) -> dict:
     pushed, failed, errors = 0, 0, []
     contact_ids: dict = {}
 
+    # On envoie par paquets de 1 pour pouvoir tracer les échecs individuellement
     try:
         with httpx.Client(timeout=25.0) as client:
             for b in businesses:
-                payload = _contact_payload(b)
-                if payload is None:
+                contact = _contact_payload(b)
+                if contact is None:
                     failed += 1
                     errors.append(f"{b.get('name', '?')} : pas de numéro de téléphone")
                     continue
+
+                body = {"contacts": [contact]}
                 try:
-                    r = client.post(f"{API_BASE}/contacts", headers=_headers(), json=payload)
-                    if r.status_code in (200, 201):
+                    r = client.post(f"{API_BASE}/contacts", headers=_headers(), json=body)
+                    if r.status_code in (200, 201, 204):
                         pushed += 1
                         try:
                             data = r.json()
-                            cid = data.get("contact_id") or data.get("id")
-                            if cid and b.get("dedup_key"):
-                                contact_ids[b["dedup_key"]] = str(cid)
+                            inner = data if isinstance(data, list) else data.get("contacts", data)
+                            if isinstance(inner, list) and inner:
+                                first = inner[0]
+                                cid = first.get("contact_id") or first.get("id") if isinstance(first, dict) else None
+                                if cid and b.get("dedup_key"):
+                                    contact_ids[b["dedup_key"]] = str(cid)
                         except Exception:
                             pass
                     else:
                         failed += 1
-                        errors.append(f"{payload['company']} : HTTP {r.status_code} {r.text[:120]}")
+                        snippet = r.text[:140].replace("\n", " ")
+                        errors.append(f"{contact['company']} : HTTP {r.status_code} {snippet}")
                 except Exception as e:
                     failed += 1
-                    errors.append(f"{payload['company']} : {e}")
+                    errors.append(f"{contact['company']} : {e}")
     except Exception as e:
         return {"ok": False, "message": f"Erreur Ringover : {e}",
                 "pushed": pushed, "failed": failed, "errors": errors}
@@ -222,6 +299,8 @@ def push_contacts(businesses: list[dict]) -> dict:
     msg = f"{pushed} contact(s) envoyé(s) vers Ringover"
     if failed:
         msg += f", {failed} échec(s)"
+    if pushed == 0 and failed > 0 and any("HTTP 500" in e for e in errors):
+        msg += " — Erreur serveur Ringover (vérifie les scopes 'Contacts' sur la clé API)"
     return {"ok": pushed > 0, "message": msg, "pushed": pushed, "failed": failed,
             "errors": errors[:20], "contact_ids": contact_ids}
 
@@ -231,21 +310,32 @@ def push_contacts(businesses: list[dict]) -> dict:
 # --------------------------------------------------------------------------
 
 def ringover_csv(businesses: list[dict]) -> bytes:
-    """CSV au format import contacts Ringover."""
+    """CSV au format import contacts Ringover.
+
+    Prénom / Nom = dirigeant extrait du champ managers (BCE/KBO).
+    Si pas de dirigeant connu, fallback : Nom = nom de l'entreprise.
+    """
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow(["Prénom", "Nom", "Société", "Numéro", "Email", "Notes"])
     for b in businesses:
         phone = _to_e164(b.get("phone") or "") or ""
-        name = (b.get("name") or "").strip()
+        company = (b.get("name") or "").strip()
+
+        firstname, lastname = split_manager_name(b.get("managers") or "")
+        if not firstname and not lastname:
+            # Aucun dirigeant identifié → fallback sur le nom de l'entreprise
+            lastname = company
+
         notes = []
         if b.get("managers"):
-            notes.append(f"Dirigeant: {b['managers']}")
+            notes.append(f"Dirigeant(s) source : {b['managers']}")
         if b.get("vat_number"):
             notes.append(f"TVA: {b['vat_number']}")
         if b.get("city"):
             notes.append(b["city"])
         if b.get("call_status"):
             notes.append(f"Statut: {b['call_status']}")
-        writer.writerow(["", name, name, phone, b.get("email") or "", " | ".join(notes)])
+
+        writer.writerow([firstname, lastname, company, phone, b.get("email") or "", " | ".join(notes)])
     return buf.getvalue().encode("utf-8-sig")

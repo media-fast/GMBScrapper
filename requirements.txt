@@ -7,3 +7,4 @@ rapidfuzz>=3.9
 pandas>=2.2
 openpyxl>=3.1
 tenacity>=8.5
+python-dotenv>=1.0

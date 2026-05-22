@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS businesses (
     callback_date        TEXT,
     ringover_contact_id  TEXT
 );
+
+CREATE TABLE IF NOT EXISTS search_businesses (
+    search_id   INTEGER NOT NULL,
+    dedup_key   TEXT NOT NULL,
+    google_rank INTEGER,
+    category    TEXT,
+    PRIMARY KEY (search_id, dedup_key),
+    FOREIGN KEY (search_id) REFERENCES searches(id),
+    FOREIGN KEY (dedup_key) REFERENCES businesses(dedup_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_businesses_search ON search_businesses(search_id);
+CREATE INDEX IF NOT EXISTS idx_search_businesses_dedup  ON search_businesses(dedup_key);
 """
 
 # Colonnes ajoutées après coup (migration des bases existantes)
@@ -58,7 +71,46 @@ MIGRATION_COLUMNS = {
     "last_call_at": "TEXT",
     "callback_date": "TEXT",
     "ringover_contact_id": "TEXT",
+    # Tous les champs Business persistés pour que l'historique reste complet
+    "locality": "TEXT",
+    "postal_code": "TEXT",
+    "email": "TEXT",
+    "category": "TEXT",
+    "legal_form": "TEXT",
+    "bce_status": "TEXT",
+    "creation_date": "TEXT",
+    "capital": "TEXT",
+    "establishments_count": "INTEGER",
+    "nace_activities": "TEXT",
+    "rating": "REAL",
+    "reviews_count": "INTEGER",
+    "hours": "TEXT",
+    "gmaps_url": "TEXT",
+    "plus_code": "TEXT",
+    "nbb_url": "TEXT",
+    "nbb_year": "TEXT",
+    "nbb_revenue": "TEXT",
+    "nbb_equity": "TEXT",
+    "nbb_employees": "TEXT",
+    "companyweb_url": "TEXT",
+    "companyweb_score": "TEXT",
+    "ai_briefing": "TEXT",        # JSON-encoded briefing IA
+    "ai_briefing_at": "TEXT",     # timestamp dernière génération
+    "seo_audit": "TEXT",          # JSON-encoded audit SEO (website + GMB)
+    "seo_audit_at": "TEXT",       # timestamp dernier audit
 }
+
+# Champs persistés pour chaque entreprise (lus depuis Business.to_dict())
+BUSINESS_PERSISTED_FIELDS = [
+    "name", "bce_number", "vat_number", "address", "city", "query", "phone",
+    "website", "managers",
+    "locality", "postal_code", "email", "category",
+    "legal_form", "bce_status", "creation_date", "capital",
+    "establishments_count", "nace_activities",
+    "rating", "reviews_count", "hours", "gmaps_url", "plus_code",
+    "nbb_url", "nbb_year", "nbb_revenue", "nbb_equity", "nbb_employees",
+    "companyweb_url", "companyweb_score",
+]
 
 
 def _connect() -> sqlite3.Connection:
@@ -75,6 +127,18 @@ def init_db() -> None:
         for col, ddl in MIGRATION_COLUMNS.items():
             if col not in existing:
                 conn.execute(f"ALTER TABLE businesses ADD COLUMN {col} {ddl}")
+
+        # Migration : rétro-remplir search_businesses depuis businesses.search_id
+        count = conn.execute("SELECT COUNT(*) c FROM search_businesses").fetchone()["c"]
+        if count == 0:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO search_businesses (search_id, dedup_key, google_rank, category)
+                SELECT search_id, dedup_key, NULL, NULL
+                FROM businesses
+                WHERE search_id IS NOT NULL
+                """
+            )
 
 
 def _norm(s: str) -> str:
@@ -140,6 +204,26 @@ def save_search(query: str, cities: list[str], businesses: list[Business]) -> in
         )
         search_id = cur.lastrowid
 
+        # Construction dynamique de l'INSERT à partir de BUSINESS_PERSISTED_FIELDS
+        meta_cols = ["dedup_key", "first_seen", "last_seen", "search_id", "call_status"]
+        all_cols = meta_cols + BUSINESS_PERSISTED_FIELDS
+        placeholders = ", ".join("?" * len(all_cols))
+        # ON CONFLICT : on garde l'ancien si le nouveau est NULL (sauf name et last_seen)
+        always_overwrite = {"name", "last_seen", "search_id"}
+        update_clauses = []
+        for col in BUSINESS_PERSISTED_FIELDS + ["last_seen"]:
+            if col in always_overwrite:
+                update_clauses.append(f"{col}=excluded.{col}")
+            else:
+                update_clauses.append(
+                    f"{col}=COALESCE(excluded.{col}, businesses.{col})"
+                )
+        update_clauses.append("search_id=excluded.search_id")
+        upsert_sql = (
+            f"INSERT INTO businesses ({', '.join(all_cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(dedup_key) DO UPDATE SET {', '.join(update_clauses)}"
+        )
+
         for b in businesses:
             key = dedup_key(b)
             existing = conn.execute(
@@ -147,28 +231,119 @@ def save_search(query: str, cities: list[str], businesses: list[Business]) -> in
             ).fetchone()
             first_seen = existing["first_seen"] if existing else now
 
+            values = [key, first_seen, now, search_id, STATUS_TO_CALL]
+            for field in BUSINESS_PERSISTED_FIELDS:
+                values.append(getattr(b, field, None))
+
+            conn.execute(upsert_sql, values)
+
             conn.execute(
-                """
-                INSERT INTO businesses
-                    (dedup_key, name, bce_number, vat_number, address, city, query,
-                     phone, website, managers, first_seen, last_seen, search_id, call_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(dedup_key) DO UPDATE SET
-                    name=excluded.name,
-                    bce_number=COALESCE(excluded.bce_number, businesses.bce_number),
-                    vat_number=COALESCE(excluded.vat_number, businesses.vat_number),
-                    phone=COALESCE(excluded.phone, businesses.phone),
-                    website=COALESCE(excluded.website, businesses.website),
-                    managers=COALESCE(excluded.managers, businesses.managers),
-                    last_seen=excluded.last_seen
-                """,
-                (
-                    key, b.name, b.bce_number, b.vat_number, b.address, b.city,
-                    b.query, b.phone, b.website, b.managers, first_seen, now,
-                    search_id, STATUS_TO_CALL,
-                ),
+                "INSERT OR REPLACE INTO search_businesses "
+                "(search_id, dedup_key, google_rank, category) VALUES (?, ?, ?, ?)",
+                (search_id, key, getattr(b, "google_rank", None), getattr(b, "category", None)),
             )
     return search_id
+
+
+def get_search(search_id: int) -> Optional[dict]:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM searches WHERE id = ?", (search_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_search_businesses(search_id: int) -> list[dict]:
+    """Liste les entreprises d'un scrape donné, avec rang Google."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT b.*, sb.google_rank AS google_rank
+            FROM businesses b
+            JOIN search_businesses sb ON sb.dedup_key = b.dedup_key
+            WHERE sb.search_id = ?
+            ORDER BY COALESCE(sb.google_rank, 999), b.name
+            """,
+            (search_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_search(search_id: int) -> None:
+    init_db()
+    with _connect() as conn:
+        conn.execute("DELETE FROM search_businesses WHERE search_id = ?", (search_id,))
+        conn.execute("DELETE FROM searches WHERE id = ?", (search_id,))
+
+
+# --------------------------------------------------------------------------
+# Cache des briefings IA
+# --------------------------------------------------------------------------
+import json as _json
+
+
+def get_briefing(dedup_key_value: str) -> Optional[dict]:
+    if not dedup_key_value:
+        return None
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT ai_briefing, ai_briefing_at FROM businesses WHERE dedup_key = ?",
+            (dedup_key_value,),
+        ).fetchone()
+    if not row or not row["ai_briefing"]:
+        return None
+    try:
+        data = _json.loads(row["ai_briefing"])
+        data["_generated_at"] = row["ai_briefing_at"]
+        return data
+    except Exception:
+        return None
+
+
+def save_briefing(dedup_key_value: str, briefing: dict) -> None:
+    if not dedup_key_value or not briefing:
+        return
+    init_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    payload = _json.dumps(briefing, ensure_ascii=False)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE businesses SET ai_briefing = ?, ai_briefing_at = ? WHERE dedup_key = ?",
+            (payload, now, dedup_key_value),
+        )
+
+
+def get_seo_audit(dedup_key_value: str) -> Optional[dict]:
+    if not dedup_key_value:
+        return None
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT seo_audit, seo_audit_at FROM businesses WHERE dedup_key = ?",
+            (dedup_key_value,),
+        ).fetchone()
+    if not row or not row["seo_audit"]:
+        return None
+    try:
+        data = _json.loads(row["seo_audit"])
+        data["_generated_at"] = row["seo_audit_at"]
+        return data
+    except Exception:
+        return None
+
+
+def save_seo_audit(dedup_key_value: str, audit: dict) -> None:
+    if not dedup_key_value or not audit:
+        return
+    init_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    payload = _json.dumps(audit, ensure_ascii=False)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE businesses SET seo_audit = ?, seo_audit_at = ? WHERE dedup_key = ?",
+            (payload, now, dedup_key_value),
+        )
 
 
 def list_searches(limit: int = 50) -> list[dict]:

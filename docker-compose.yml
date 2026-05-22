@@ -13,6 +13,10 @@ services:
       # Enrichissement financier (optionnel)
       NBB_API_KEY: "${NBB_API_KEY:-}"
       COMPANYWEB_API_KEY: "${COMPANYWEB_API_KEY:-}"
+      # Briefing IA pré-appel (optionnel — au moins une des deux clés)
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AI_BRIEFING_PROVIDER: "${AI_BRIEFING_PROVIDER:-}"
     volumes:
       - exports:/app/data/exports
     shm_size: "1gb"
