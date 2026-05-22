@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from typing import Callable, Optional
 from urllib.parse import quote_plus
@@ -6,6 +7,128 @@ from urllib.parse import quote_plus
 from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
 from .models import Business
+
+# playwright-stealth (optionnel) : patches d'évasion (navigator.webdriver, plugins,
+# WebGL, sec-ch-ua, hairline…). Si non installé, on bascule sur un fallback manuel.
+# Requiert v2.0+ pour l'API `Stealth` class — cf. requirements.txt.
+try:
+    from playwright_stealth import Stealth
+    _STEALTH_AVAILABLE = True
+except ImportError:
+    Stealth = None  # type: ignore
+    _STEALTH_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Profil navigateur
+# ---------------------------------------------------------------------------
+
+# Chrome récent (mai 2026). Mettre à jour quand des nouvelles versions deviennent
+# largement déployées pour éviter le flag "navigateur obsolète".
+CHROME_VERSION_FULL = "130.0.6723.92"
+CHROME_VERSION_MAJOR = "130"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    f"Chrome/{CHROME_VERSION_MAJOR}.0.0.0 Safari/537.36"
+)
+
+# Sec-CH-UA cohérent avec User-Agent (Chrome 130)
+SEC_CH_UA = (
+    f'"Chromium";v="{CHROME_VERSION_MAJOR}", '
+    f'"Google Chrome";v="{CHROME_VERSION_MAJOR}", '
+    f'"Not?A_Brand";v="99"'
+)
+
+
+# Coordonnées (lat, lng) des principaux chefs-lieux belges pour aligner la
+# géolocalisation avec la ville recherchée. Fallback : centre de Bruxelles.
+_CITY_COORDS: dict[str, tuple[float, float]] = {
+    "bruxelles":    (50.8503, 4.3517),
+    "waterloo":     (50.7172, 4.3995),
+    "braine-l'alleud": (50.6826, 4.3699),
+    "nivelles":     (50.5980, 4.3239),
+    "wavre":        (50.7173, 4.6068),
+    "ottignies":    (50.6649, 4.5677),
+    "la hulpe":     (50.7300, 4.4859),
+    "tubize":       (50.6912, 4.2010),
+    "halle":        (50.7333, 4.2378),
+    "namur":        (50.4674, 4.8720),
+    "liege":        (50.6326, 5.5797),
+    "liège":        (50.6326, 5.5797),
+    "charleroi":    (50.4108, 4.4446),
+    "mons":         (50.4542, 3.9560),
+    "tournai":      (50.6056, 3.3893),
+    "louvain":      (50.8798, 4.7005),
+    "leuven":       (50.8798, 4.7005),
+    "anvers":       (51.2194, 4.4025),
+    "antwerpen":    (51.2194, 4.4025),
+    "gent":         (51.0543, 3.7174),
+    "gand":         (51.0543, 3.7174),
+    "bruges":       (51.2093, 3.2247),
+    "brugge":       (51.2093, 3.2247),
+    "arlon":        (49.6837, 5.8164),
+    "bastogne":     (50.0023, 5.7180),
+    "dinant":       (50.2603, 4.9128),
+    "verviers":     (50.5879, 5.8631),
+    "hasselt":      (50.9307, 5.3378),
+}
+_DEFAULT_COORDS = (50.8503, 4.3517)  # Bruxelles
+
+
+def _coords_for_city(city: str) -> dict[str, float]:
+    """Coordonnées GPS d'une ville belge pour aligner la géolocalisation du navigateur."""
+    key = (city or "").strip().lower()
+    lat, lng = _CITY_COORDS.get(key, _DEFAULT_COORDS)
+    return {"latitude": lat, "longitude": lng}
+
+
+def _running_in_docker() -> bool:
+    """Détecte si on tourne dans un container Docker (sandbox Chrome problématique)."""
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            return "docker" in f.read() or "containerd" in f.read()
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _build_stealth() -> Optional["Stealth"]:
+    """Construit une instance Stealth configurée pour un profil Chrome belge réaliste.
+
+    Retourne None si la lib `playwright-stealth>=2.0` n'est pas installée.
+    """
+    if not _STEALTH_AVAILABLE:
+        return None
+    return Stealth(
+        navigator_languages_override=("fr-BE", "fr", "en-US", "en"),
+        navigator_platform_override="Win32",
+        # Override du User-Agent géré côté contexte Playwright (pas ici)
+        # Toutes les autres évasions par défaut sont activées.
+    )
+
+
+# Plugins pseudo-réalistes utilisés UNIQUEMENT en fallback (sans playwright-stealth).
+# Un `navigator.plugins = [1,2,3,4,5]` est trivialement détectable ; ici on simule
+# les vrais Plugin objects que Chrome expose.
+_FALLBACK_INIT_SCRIPT = """
+(() => {
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  const fakePlugins = [
+    { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+  ];
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => Object.assign(fakePlugins, { length: fakePlugins.length, item: (i) => fakePlugins[i] }),
+  });
+  Object.defineProperty(navigator, 'languages', { get: () => ['fr-BE', 'fr', 'en-US', 'en'] });
+})();
+"""
 
 
 GMAPS_SEARCH_URL = "https://www.google.com/maps/search/{query}"
@@ -160,20 +283,50 @@ async def _scrape(
 
     results: list[Business] = []
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=headless,
-            args=["--disable-blink-features=AutomationControlled"],
+    # ---- Stealth : enveloppe async_playwright si la lib est dispo, sinon fallback ----
+    stealth = _build_stealth()
+    playwright_ctx = async_playwright()
+    if stealth is not None:
+        playwright_ctx = stealth.use_async(playwright_ctx)
+
+    if on_progress:
+        on_progress(
+            f"Stealth : {'ON (playwright-stealth)' if stealth else 'OFF (fallback init_script)'}"
         )
+
+    # ---- Args Chromium : --no-sandbox UNIQUEMENT en Docker (sécurité) ----
+    chromium_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+    ]
+    if _running_in_docker():
+        chromium_args += ["--no-sandbox", "--disable-dev-shm-usage"]
+
+    async with playwright_ctx as p:
+        browser = await p.chromium.launch(headless=headless, args=chromium_args)
         context = await browser.new_context(
             locale=locale,
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
+            user_agent=USER_AGENT,
             viewport={"width": 1400, "height": 900},
+            # Headers cohérents avec Chrome 130 sur Windows
+            extra_http_headers={
+                "Accept-Language": "fr-BE,fr;q=0.9,en;q=0.8",
+                "Sec-CH-UA": SEC_CH_UA,
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '"Windows"',
+                "Sec-CH-UA-Platform-Version": '"15.0.0"',
+            },
+            color_scheme="light",
+            timezone_id="Europe/Brussels",
+            # Géolocalisation alignée avec la ville recherchée (sinon Brussels par défaut)
+            geolocation=_coords_for_city(city),
+            permissions=["geolocation"],
         )
+        # Sans playwright-stealth, on applique un fallback init_script avec
+        # navigator.plugins pseudo-réalistes (et navigator.webdriver=undefined).
+        if not _STEALTH_AVAILABLE:
+            await context.add_init_script(_FALLBACK_INIT_SCRIPT)
+
         page = await context.new_page()
 
         if on_progress:
