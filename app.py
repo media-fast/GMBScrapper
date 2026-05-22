@@ -25,7 +25,23 @@ from integrations import (
     ringover_csv,
     sync_call_statuses,
 )
-from scraper import filter_by_city, scrape_google_maps
+from scraper import (
+    filter_by_city,
+    init_scrape_state,
+    request_cancel,
+    scrape_google_maps,
+    start_background_scrape,
+    PHASE_CANCELLED,
+    PHASE_DEDUP_POST,
+    PHASE_DEDUP_SEEN,
+    PHASE_DONE,
+    PHASE_ENRICHMENT,
+    PHASE_ERROR,
+    PHASE_FILTERING,
+    PHASE_SAVING,
+    PHASE_SCRAPING,
+)
+import time
 from audit import run_full_audit
 from data import (
     ARRONDISSEMENTS,
@@ -1585,6 +1601,7 @@ def _init_state():
         "selected_search_id": None,
         "preset_query": "opticien",
         "preset_cities": "Waterloo\nBraine-l'Alleud\nNivelles\nLa Hulpe\nHalle",
+        "scrape_state": init_scrape_state(),
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1820,9 +1837,22 @@ with st.container(border=True):
             f'</div></div>',
             unsafe_allow_html=True,
         )
+    # État scrape en cours
+    _scrape_active = st.session_state.scrape_state.get("active", False)
+
     with foot2:
-        run = st.button("Lancer la recherche", type="primary", use_container_width=True,
-                        disabled=not (metiers and cities))
+        if _scrape_active:
+            # Pendant un scrape, "Lancer" est remplacé par "Annuler"
+            if st.button("Annuler la recherche", type="secondary",
+                         use_container_width=True, key="cancel_btn"):
+                request_cancel(st.session_state.scrape_state)
+                st.rerun()
+            run = False
+        else:
+            run = st.button(
+                "Lancer la recherche", type="primary", use_container_width=True,
+                disabled=not (metiers and cities),
+            )
 
     # Panneau de progression — placé À L'INTÉRIEUR de la form-card, en dessous du bouton
     progress_slot = st.empty()
@@ -1839,205 +1869,159 @@ def log(msg: str) -> None:
     st.session_state.log.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 
+# ===========================================================================
+# Rendu du panel de progression à partir de st.session_state.scrape_state.
+# Le thread écrit dans ce state, le main thread relit et rend l'UI à chaque
+# rerun. Aucune logique de scraping ici.
+# ===========================================================================
+
+def _format_duration(started_at, ended_at=None) -> str:
+    if not started_at:
+        return ""
+    end = ended_at or datetime.now()
+    secs = int((end - started_at).total_seconds())
+    mins, s = divmod(secs, 60)
+    return f"{mins} min {s:02d} s" if mins else f"{s} s"
+
+
+def _render_progress_panel(slot, state: dict) -> None:
+    """Rend le panel sombre 'Recherche en cours' depuis le scrape_state."""
+    communes_done = state.get("communes_done", 0)
+    communes_total = max(state.get("communes_total", 1), 1)
+    pct = min(100, int(100 * communes_done / communes_total))
+    prospects = state.get("prospects_found", 0)
+    vat = state.get("vat_enriched", 0)
+    last_log = _safe_html(state.get("last_log") or "")
+
+    # ETA estimée
+    started = state.get("started_at")
+    if started and communes_done > 0:
+        elapsed = (datetime.now() - started).total_seconds()
+        per_unit = elapsed / communes_done
+        eta_sec = max(0, int(per_unit * (communes_total - communes_done)))
+        eta_mins, eta_s = divmod(eta_sec, 60)
+        eta_html = (f"{eta_mins}<span class='pp-sm'>min {eta_s:02d} s</span>"
+                    if eta_mins else f"{eta_s}<span class='pp-sm'>sec</span>")
+    else:
+        eta_html = "<span class='pp-sm'>—</span>"
+
+    phase_labels = {
+        PHASE_SCRAPING: "Scraping Google Maps",
+        PHASE_FILTERING: "Filtre ville",
+        PHASE_DEDUP_SEEN: "Dédup historique",
+        PHASE_ENRICHMENT: "Enrichissement TVA / BCE",
+        PHASE_DEDUP_POST: "Dédup post-BCE",
+        PHASE_SAVING: "Sauvegarde",
+    }
+    phase_text = phase_labels.get(state.get("phase"), "En cours")
+    metiers = state.get("metiers") or []
+    cities = state.get("cities") or []
+    meta = (f"Phase : {phase_text} · Lancée il y a "
+            f"{_format_duration(started)} · {len(cities)} communes × {len(metiers)} métiers")
+
+    slot.markdown(
+        f'<section class="progress-panel">'
+        f'<div class="pp-head"><div class="pp-title-wrap">'
+        f'<span class="pp-pulse"></span>'
+        f'<div class="pp-title"><h3>Recherche en cours</h3>'
+        f'<div class="pp-meta">{meta}</div>'
+        f'</div></div></div>'
+        f'<div class="pp-stats">'
+        f'<div><div class="pp-label">Communes traitées</div>'
+        f'<div class="pp-value">{communes_done}<span class="pp-sm">/ {communes_total}</span></div></div>'
+        f'<div><div class="pp-label">Prospects trouvés</div>'
+        f'<div class="pp-value">{prospects}</div></div>'
+        f'<div><div class="pp-label">Enrichissement TVA</div>'
+        f'<div class="pp-value">{vat}<span class="pp-sm">/ {prospects}</span></div></div>'
+        f'<div><div class="pp-label">Temps restant</div>'
+        f'<div class="pp-value">{eta_html}</div></div>'
+        f'</div>'
+        f'<div class="pp-bar"><div class="pp-bar-fill" style="width:{pct}%;"></div></div>'
+        f'<div class="pp-log"><span class="check">✓</span> {last_log}</div>'
+        f'</section>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_done_panel(slot, state: dict) -> None:
+    """Panel vert 'Recherche terminée'."""
+    communes_total = state.get("communes_total", 0)
+    prospects = state.get("result_count", 0)
+    vat = state.get("vat_enriched", 0)
+    duration = _format_duration(state.get("started_at"), state.get("ended_at"))
+
+    slot.markdown(
+        f'<section class="progress-panel" style="background:linear-gradient(135deg,#0F6B36,#1F9D55);">'
+        f'<div class="pp-head"><div class="pp-title-wrap">'
+        f'<span class="pp-pulse" style="background:#FFF;animation:none;box-shadow:none;"></span>'
+        f'<div class="pp-title"><h3>Recherche terminée</h3>'
+        f'<div class="pp-meta">{communes_total} communes traitées en {duration}</div>'
+        f'</div></div></div>'
+        f'<div class="pp-stats">'
+        f'<div><div class="pp-label">Communes traitées</div>'
+        f'<div class="pp-value">{communes_total}</div></div>'
+        f'<div><div class="pp-label">Prospects trouvés</div>'
+        f'<div class="pp-value">{prospects}</div></div>'
+        f'<div><div class="pp-label">Enrichissement TVA</div>'
+        f'<div class="pp-value">{vat}<span class="pp-sm">/ {prospects}</span></div></div>'
+        f'<div><div class="pp-label">Statut</div>'
+        f'<div class="pp-value" style="font-size:1.2rem;">✓ Terminé</div></div>'
+        f'</div></section>',
+        unsafe_allow_html=True,
+    )
+
+
+# ===========================================================================
+# Démarrage du thread de scrape (quand l'utilisateur clique « Lancer »)
+# ===========================================================================
 if run:
     if not metiers or not cities:
         st.error("Indique au moins un métier et une commune.")
     else:
-        st.session_state.results = []
-        st.session_state.dropped = []
-        st.session_state.skipped = []
-        st.session_state.log = []
+        start_background_scrape(
+            st.session_state.scrape_state,
+            metiers=list(metiers),
+            cities=list(cities),
+            max_per_city=max_per_city,
+            headless=headless,
+            strict_city=strict_city,
+            exclude_seen=exclude_seen,
+            require_phone=require_phone,
+            do_vat=do_vat,
+            do_bce=do_bce,
+            do_fin=do_fin,
+            workers=workers,
+        )
+        # Rerun immédiat pour afficher le panel de progression
+        st.rerun()
 
-        # Libellé combiné pour l'historique (premier métier ou plusieurs)
-        if len(metiers) == 1:
-            search_label = metiers[0]
-        else:
-            search_label = " / ".join(metiers[:3]) + (" …" if len(metiers) > 3 else "")
 
-        # Panneau de progression : progress_slot a déjà été défini dans la form-card,
-        # on l'utilise pour rendre l'état "en cours" juste sous le bouton Lancer.
-        _started_at = datetime.now()
+# ===========================================================================
+# Lecture du scrape_state à CHAQUE rerun : affiche le panel approprié.
+# Auto-refresh par polling (sleep + rerun) tant que le thread tourne.
+# ===========================================================================
+_scrape_state = st.session_state.scrape_state
+_phase = _scrape_state.get("phase", "idle")
 
-        def _elapsed_str() -> str:
-            delta = (datetime.now() - _started_at).total_seconds()
-            mins, secs = divmod(int(delta), 60)
-            return f"{mins} min {secs:02d} s" if mins else f"{secs} s"
-
-        def _render_progress(communes_done: int, communes_total: int,
-                             prospects_found: int, vat_enriched: int,
-                             last_log: str = "") -> None:
-            pct = min(100, int(100 * communes_done / max(communes_total, 1)))
-            eta_sec = max(0, int(((datetime.now() - _started_at).total_seconds()
-                                  / max(communes_done, 1)) * (communes_total - communes_done)))
-            eta_mins, eta_s = divmod(eta_sec, 60)
-            eta_html = (f"{eta_mins}<span class='pp-sm'>min {eta_s:02d} s</span>"
-                        if eta_mins else f"{eta_s}<span class='pp-sm'>sec</span>")
-            log_clean = _safe_html(last_log)
-            progress_slot.markdown(
-                f'<section class="progress-panel">'
-                f'<div class="pp-head">'
-                f'<div class="pp-title-wrap">'
-                f'<span class="pp-pulse"></span>'
-                f'<div class="pp-title">'
-                f'<h3>Recherche en cours</h3>'
-                f'<div class="pp-meta">Lancée il y a {_elapsed_str()} · '
-                f'{len(cities)} communes × {len(metiers)} métiers</div>'
-                f'</div></div></div>'
-                f'<div class="pp-stats">'
-                f'<div><div class="pp-label">Communes traitées</div>'
-                f'<div class="pp-value">{communes_done}<span class="pp-sm">/ {communes_total}</span></div></div>'
-                f'<div><div class="pp-label">Prospects trouvés</div>'
-                f'<div class="pp-value">{prospects_found}</div></div>'
-                f'<div><div class="pp-label">Enrichissement TVA</div>'
-                f'<div class="pp-value">{vat_enriched}<span class="pp-sm">/ {prospects_found}</span></div></div>'
-                f'<div><div class="pp-label">Temps restant</div>'
-                f'<div class="pp-value">{eta_html}</div></div>'
-                f'</div>'
-                f'<div class="pp-bar"><div class="pp-bar-fill" style="width:{pct}%;"></div></div>'
-                f'<div class="pp-log"><span class="check">✓</span> {log_clean}</div>'
-                f'</section>',
-                unsafe_allow_html=True,
-            )
-
-        def _render_done(communes_total: int, prospects: int, vat: int) -> None:
-            progress_slot.markdown(
-                f'<section class="progress-panel" style="background:linear-gradient(135deg,#0F6B36,#1F9D55);">'
-                f'<div class="pp-head"><div class="pp-title-wrap">'
-                f'<span class="pp-pulse" style="background:#FFF;animation:none;box-shadow:none;"></span>'
-                f'<div class="pp-title"><h3>Recherche terminée</h3>'
-                f'<div class="pp-meta">{communes_total} communes traitées en {_elapsed_str()}</div>'
-                f'</div></div></div>'
-                f'<div class="pp-stats">'
-                f'<div><div class="pp-label">Communes traitées</div>'
-                f'<div class="pp-value">{communes_total}</div></div>'
-                f'<div><div class="pp-label">Prospects trouvés</div>'
-                f'<div class="pp-value">{prospects}</div></div>'
-                f'<div><div class="pp-label">Enrichissement TVA</div>'
-                f'<div class="pp-value">{vat}<span class="pp-sm">/ {prospects}</span></div></div>'
-                f'<div><div class="pp-label">Statut</div>'
-                f'<div class="pp-value" style="font-size:1.2rem;">✓ Terminé</div></div>'
-                f'</div></section>',
-                unsafe_allow_html=True,
-            )
-
-        with tab_results:
-            _last_msg = {"text": "Démarrage…"}
-            communes_total = len(cities) * len(metiers)
-            communes_done = 0
-            _render_progress(0, communes_total, 0, 0, "Démarrage…")
-
-            def cb(msg: str) -> None:
-                log(msg)
-                _last_msg["text"] = msg
-                # Estimer prospects/vat depuis les messages
-                _render_progress(communes_done, communes_total,
-                                 len(businesses) if 'businesses' in dir() else 0,
-                                 sum(1 for b in (businesses if 'businesses' in dir() else []) if getattr(b, "vat_number", None)),
-                                 msg)
-
-            businesses = []
-            try:
-                for i, m in enumerate(metiers, 1):
-                    log(f"[{i}/{len(metiers)}] Scraping métier : {m}")
-                    _last_msg["text"] = f"Scraping métier {m}…"
-                    _render_progress(communes_done, communes_total, len(businesses), 0, _last_msg["text"])
-                    for city_idx, city in enumerate(cities):
-                        # Scraping ville par ville pour suivre la progression
-                        part = scrape_google_maps(
-                            query=m, cities=[city], max_results_per_city=max_per_city,
-                            headless=headless, on_progress=cb,
-                        )
-                        businesses.extend(part)
-                        communes_done += 1
-                        _render_progress(communes_done, communes_total,
-                                         len(businesses), 0,
-                                         f"{m} · {city} — {len(part)} prospects")
-                log(f"Scraping terminé : {len(businesses)} fiches brutes (tous métiers)")
-            except Exception as e:
-                st.error(f"Erreur scraping : {e}")
-
-            dropped: list = []
-            if strict_city and businesses:
-                businesses, dropped = filter_by_city(businesses)
-                log(f"Filtre ville : {len(businesses)} gardées, {len(dropped)} hors zone")
-                _render_progress(communes_total, communes_total, len(businesses), 0,
-                                 f"Filtre ville : {len(dropped)} hors zone écartées")
-
-            skipped: list = []
-            if exclude_seen and businesses:
-                mark_seen(businesses)
-                skipped = [b for b in businesses if b.already_seen]
-                businesses = [b for b in businesses if not b.already_seen]
-                log(f"Dédup historique : {len(skipped)} déjà connues écartées")
-                _render_progress(communes_total, communes_total, len(businesses), 0,
-                                 f"Dédup : {len(skipped)} déjà connues")
-
-            if (do_vat or do_bce or do_fin) and businesses:
-                log(f"Enrichissement parallèle (workers={workers})…")
-                _render_progress(communes_total, communes_total, len(businesses), 0,
-                                 "Enrichissement TVA / BCE / financier…")
-                try:
-                    businesses = enrich_all_parallel(businesses, on_progress=cb, max_workers=workers)
-                except Exception as e:
-                    st.error(f"Erreur enrichissement : {e}")
-
-            if exclude_seen and businesses:
-                # Re-check : le n° BCE découvert peut révéler des doublons
-                mark_seen(businesses)
-                newly = [b for b in businesses if b.already_seen]
-                if newly:
-                    skipped += newly
-                    businesses = [b for b in businesses if not b.already_seen]
-                    log(f"Dédup post-BCE : {len(newly)} doublons supplémentaires écartés")
-
-            # Dédup INTRA-BATCH : si deux métiers / villes renvoient la même entreprise
-            # (même BCE ou même nom + code postal), on ne garde qu'une seule fiche.
-            from storage.history import dedup_key as _dk
-            seen_in_batch = set()
-            unique_businesses = []
-            internal_dupes = 0
-            for b in businesses:
-                key = _dk(b)
-                if key in seen_in_batch:
-                    internal_dupes += 1
-                    continue
-                seen_in_batch.add(key)
-                unique_businesses.append(b)
-            if internal_dupes:
-                log(f"Dédup intra-batch : {internal_dupes} doublons fusionnés (même BCE/nom)")
-                _render_progress(communes_total, communes_total, len(unique_businesses), 0,
-                                 f"Fusion : {internal_dupes} doublons internes")
-            businesses = unique_businesses
-
-            # Filtre téléphone obligatoire (si demandé dans les params)
-            try:
-                _need_phone_filter = require_phone
-            except NameError:
-                _need_phone_filter = False
-            if _need_phone_filter and businesses:
-                before = len(businesses)
-                businesses = [b for b in businesses if b.phone]
-                removed = before - len(businesses)
-                if removed:
-                    log(f"Filtre téléphone : {removed} fiches sans tél écartées")
-                    _render_progress(communes_total, communes_total, len(businesses), 0,
-                                     f"Filtre téléphone : {removed} écartées")
-
-            try:
-                new_search_id = save_search(search_label, cities, businesses)
-                st.session_state.last_search_id = new_search_id
-                st.session_state.selected_search_id = new_search_id
-            except Exception as e:
-                log(f"! Erreur sauvegarde historique : {e}")
-
-            st.session_state.results = businesses
-            st.session_state.dropped = dropped
-            st.session_state.skipped = skipped
-            st.session_state.last_run = datetime.now()
-
-            vat_n = sum(1 for b in businesses if b.vat_number)
-            log(f"Terminé : {len(businesses)} nouvelles entreprises, {vat_n} avec TVA")
-            _render_done(communes_total, len(businesses), vat_n)
+if _scrape_state.get("active"):
+    _render_progress_panel(progress_slot, _scrape_state)
+    # Polling : on rafraîchit chaque 1.5 s tant que le thread tourne
+    time.sleep(1.5)
+    st.rerun()
+elif _phase == PHASE_DONE:
+    _render_done_panel(progress_slot, _scrape_state)
+    # Auto-sélection du nouveau scrape dans l'onglet Résultats
+    sid = _scrape_state.get("result_search_id")
+    if sid and st.session_state.get("last_search_id") != sid:
+        st.session_state.last_search_id = sid
+        st.session_state.selected_search_id = sid
+        st.session_state.last_run = _scrape_state.get("ended_at") or datetime.now()
+elif _phase == PHASE_CANCELLED:
+    progress_slot.warning("Recherche annulée par l'utilisateur.",
+                          icon=":material/cancel:")
+elif _phase == PHASE_ERROR:
+    progress_slot.error(f"Erreur durant le scraping : {_scrape_state.get('error')}",
+                        icon=":material/error:")
 
 
 results = st.session_state.results
