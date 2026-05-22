@@ -145,44 +145,34 @@ def init_db() -> None:
         # Idempotent : les clés déjà au nouveau format (contenant `|`) sont
         # ignorées. Les anciennes lignes sans postal deviennent `bce:...|`.
         #
-        # ⚠️ Encapsulé dans une transaction SQLite explicite : si UN seul UPDATE
-        # plante au milieu, tout est rollback et la base reste dans son ancien
-        # état cohérent. Pas d'état hybride mi-ancien mi-nouveau format.
+        # ⚠️ Atomicité : on s'appuie sur la transaction implicite du context
+        # manager `with _connect() as conn:` — toute exception non-IntegrityError
+        # remonte et déclenche un ROLLBACK automatique de TOUT init_db (schéma
+        # de base inclus, mais idempotent au prochain run). Pas d'état hybride
+        # mi-ancien mi-nouveau format possible.
         old_rows = conn.execute(
             "SELECT dedup_key, postal_code FROM businesses "
             "WHERE dedup_key LIKE 'bce:%' AND dedup_key NOT LIKE '%|%'"
         ).fetchall()
-        if old_rows:
+        for row in old_rows:
+            old_key = row["dedup_key"]
+            postal = (row["postal_code"] or "").strip()
+            new_key = f"{old_key}|{postal}"
+            if new_key == old_key:
+                continue
             try:
-                conn.execute("BEGIN IMMEDIATE")
-                for row in old_rows:
-                    old_key = row["dedup_key"]
-                    postal = (row["postal_code"] or "").strip()
-                    new_key = f"{old_key}|{postal}"
-                    if new_key == old_key:
-                        continue
-                    try:
-                        conn.execute(
-                            "UPDATE businesses SET dedup_key = ? WHERE dedup_key = ?",
-                            (new_key, old_key),
-                        )
-                        conn.execute(
-                            "UPDATE search_businesses SET dedup_key = ? WHERE dedup_key = ?",
-                            (new_key, old_key),
-                        )
-                    except sqlite3.IntegrityError:
-                        # Collision rare (2 lignes dont la new_key existe déjà) :
-                        # on saute cette ligne, le reste de la transaction continue.
-                        continue
-                conn.execute("COMMIT")
-            except sqlite3.Error:
-                # Toute autre erreur SQLite (disque plein, lock, etc.) → ROLLBACK
-                # pour préserver l'état d'origine. L'app peut continuer à tourner
-                # avec les anciennes clés.
-                try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
+                conn.execute(
+                    "UPDATE businesses SET dedup_key = ? WHERE dedup_key = ?",
+                    (new_key, old_key),
+                )
+                conn.execute(
+                    "UPDATE search_businesses SET dedup_key = ? WHERE dedup_key = ?",
+                    (new_key, old_key),
+                )
+            except sqlite3.IntegrityError:
+                # Collision rare (2 lignes dont la new_key existe déjà) :
+                # on saute cette ligne, le reste de la transaction continue.
+                continue
 
 
 def _norm(s: str) -> str:
