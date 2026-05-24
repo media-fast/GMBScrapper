@@ -145,6 +145,83 @@ CONSENT_BUTTONS = [
 POSTAL_RE = re.compile(r"\b(\d{4})\s+([A-Za-zÀ-ÿ' \-]+)")
 
 
+# ---------------------------------------------------------------------------
+# Détection de blocage Google (CAPTCHA / IP bannie)
+# ---------------------------------------------------------------------------
+
+class GoogleBlockedError(RuntimeError):
+    """Levée quand Google bloque l'IP (CAPTCHA / 429 / sorry page).
+
+    Cas typique : trop de requêtes depuis la même IP → Google sert une page
+    /sorry/ avec un reCAPTCHA. Inutile de retry — il faut soit changer d'IP
+    (VPN/proxy), soit attendre 1–24 h.
+    """
+
+
+# Phrases qui apparaissent sur les pages de CAPTCHA Google (FR + EN + NL).
+# Couvre les variantes /sorry/ et le challenge inline.
+_BLOCK_TEXT_PATTERNS = [
+    "unusual traffic",                  # EN
+    "trafic inhabituel",                # FR
+    "ongebruikelijk verkeer",           # NL
+    "verify you are a human",           # EN
+    "vérifier que vous êtes",           # FR ("vérifier que vous êtes humain/un humain")
+    "our systems have detected",        # EN
+    "nos systèmes ont détecté",         # FR
+    "before you continue to google",    # EN (pas un block mais consent — exclu plus bas)
+]
+# Sous-chaînes URL qui indiquent un block sans ambiguïté.
+_BLOCK_URL_MARKERS = ("/sorry/", "/recaptcha/")
+
+
+async def _detect_google_block(page: Page) -> Optional[str]:
+    """Inspecte la page courante et renvoie une raison si Google bloque.
+
+    Retourne None si tout va bien. Best-effort : toute exception interne est
+    avalée pour ne pas masquer un échec scrape légitime — la détection n'est
+    qu'un canal d'information.
+    """
+    # 1. URL — signal le plus fiable (Google redirige sur /sorry/...)
+    try:
+        url = page.url or ""
+        for marker in _BLOCK_URL_MARKERS:
+            if marker in url:
+                return f"Google a redirigé vers une page de challenge ({marker} dans l'URL)"
+    except Exception:
+        pass
+
+    # 2. Selector spécifique au formulaire CAPTCHA
+    try:
+        captcha_form = await page.query_selector(
+            "form#captcha-form, form[action*='/sorry/'], iframe[src*='recaptcha']"
+        )
+        if captcha_form:
+            return "Formulaire CAPTCHA Google détecté sur la page"
+    except Exception:
+        pass
+
+    # 3. Titre de page
+    try:
+        title = (await page.title() or "").lower()
+        if "sorry" in title or "captcha" in title:
+            return f"Titre de page suspect : {title!r}"
+    except Exception:
+        pass
+
+    # 4. Texte du body (fallback) — on lit seulement le début pour rester rapide
+    try:
+        body_text = await page.evaluate(
+            "() => (document.body && document.body.innerText || '').slice(0, 2000).toLowerCase()"
+        )
+        for pat in _BLOCK_TEXT_PATTERNS:
+            if pat in body_text:
+                return f"Texte de blocage Google détecté : {pat!r}"
+    except Exception:
+        pass
+
+    return None
+
+
 async def _dismiss_consent(page: Page) -> None:
     for sel in CONSENT_BUTTONS:
         try:
@@ -336,6 +413,16 @@ async def _scrape(
         await _dismiss_consent(page)
         await page.wait_for_timeout(1500)
 
+        # ⛔ Détection IP bannie / CAPTCHA Google. On vérifie APRÈS le consent
+        # parce que la page consent peut être confondue avec un challenge.
+        block_reason = await _detect_google_block(page)
+        if block_reason:
+            if on_progress:
+                on_progress(f"⛔ Google bloqué : {block_reason}")
+            await context.close()
+            await browser.close()
+            raise GoogleBlockedError(block_reason)
+
         await _scroll_results(page, max_results)
 
         cards = page.locator(RESULT_CARD_SELECTOR)
@@ -411,6 +498,11 @@ def scrape_google_maps(
                 _scrape(query, city, max_results_per_city, headless, locale, on_progress)
             )
             all_results.extend(city_results)
+        except GoogleBlockedError:
+            # Ne PAS avaler : on remonte au runner pour qu'il stoppe le pipeline
+            # complet et affiche un bandeau dédié — un retry serait inutile,
+            # l'IP est bannie.
+            raise
         except Exception as e:
             if on_progress:
                 on_progress(f"Échec scraping {city} : {e}")

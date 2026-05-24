@@ -1891,6 +1891,12 @@ with st.container(border=True):
                 disabled=not (metiers and cities),
             )
 
+    # ⛔ Bandeau d'alerte "Google a bloqué l'IP" — rendu AVANT le panel de
+    # progression pour être ultra-visible (rouge, en haut). Persiste tant que
+    # state["google_blocked"] est True (peut être effacé en relançant un scrape
+    # qui réussit, ce qui reset le flag dans init_scrape_state).
+    google_block_slot = st.empty()
+
     # Panneau de progression — placé À L'INTÉRIEUR de la form-card, en dessous du bouton
     progress_slot = st.empty()
 
@@ -1972,6 +1978,22 @@ def _render_progress_panel(slot, state: dict) -> None:
              f'<span class="pp-sm" style="color:rgba(255,255,255,0.55);">/ {brut} bruts</span>'
     )
 
+    # ℹ Avertissement : les chiffres affichés pendant le scrape sont des
+    # snapshots intermédiaires (prospects_brut grimpe, prospects_found et
+    # variants_done évoluent, ETA est extrapolée). Les valeurs définitives
+    # apparaissent dans le panel "Terminé" à la fin.
+    estimation_banner = (
+        '<div style="display:flex;align-items:center;gap:0.5rem;'
+        'padding:0.55rem 0.85rem;margin:0.4rem 0 0.9rem;'
+        'background:rgba(255,255,255,0.08);border-left:3px solid #FFC857;'
+        'border-radius:6px;font-size:0.74rem;color:rgba(255,255,255,0.85);">'
+        '<span style="font-size:0.95rem;">ℹ</span>'
+        '<span><strong>Estimations en temps réel.</strong> Les compteurs et '
+        'le temps restant évoluent à chaque étape — les valeurs définitives '
+        's\'affichent à la fin de la recherche.</span>'
+        '</div>'
+    )
+
     slot.markdown(
         f'<section class="progress-panel">'
         f'<div class="pp-head"><div class="pp-title-wrap">'
@@ -1979,6 +2001,7 @@ def _render_progress_panel(slot, state: dict) -> None:
         f'<div class="pp-title"><h3>Recherche en cours</h3>'
         f'<div class="pp-meta">{meta}</div>'
         f'</div></div></div>'
+        f'{estimation_banner}'
         f'<div class="pp-stats">'
         f'<div><div class="pp-label">Villes</div>'
         f'<div class="pp-value">{cities_done}<span class="pp-sm">/ {cities_total}</span></div></div>'
@@ -2124,6 +2147,38 @@ if run:
 _scrape_state = st.session_state.scrape_state
 _phase = _scrape_state.get("phase", "idle")
 
+# ⛔ Bandeau Google block — rendu en premier, persiste après la fin du scrape
+# tant que l'utilisateur n'a pas relancé une recherche (qui reset le flag).
+if _scrape_state.get("google_blocked"):
+    _block_reason = _safe_html(
+        _scrape_state.get("google_blocked_reason") or "raison inconnue"
+    )
+    google_block_slot.markdown(
+        '<section style="margin:0.6rem 0 1rem;padding:1rem 1.2rem;'
+        'background:linear-gradient(135deg,#7F1D1D,#B91C1C);'
+        'color:#FFF;border-radius:10px;'
+        'box-shadow:0 4px 20px rgba(185,28,28,0.35);">'
+        '<div style="display:flex;align-items:center;gap:0.6rem;'
+        'margin-bottom:0.5rem;">'
+        '<span style="font-size:1.4rem;">⛔</span>'
+        '<strong style="font-size:1.05rem;">Google a bloqué les requêtes '
+        'depuis votre adresse IP</strong></div>'
+        f'<div style="font-size:0.85rem;opacity:0.95;margin-bottom:0.7rem;">'
+        f'Le scraper a détecté un CAPTCHA ou une page <code>/sorry/</code> '
+        f'Google. Détail : <em>{_block_reason}</em></div>'
+        '<div style="font-size:0.8rem;opacity:0.92;line-height:1.55;">'
+        '<strong>Solutions :</strong><br>'
+        '• Changer d\'IP (VPN, redémarrer la box, basculer en 4G)<br>'
+        '• Attendre 1 à 24 h pour que Google débanisse l\'IP<br>'
+        '• Réduire le nombre de variantes métier (toggle « Inclure les '
+        'variantes ») ou le nombre de villes par run<br>'
+        '• Désactiver le mode <code>headless</code> pour faire le CAPTCHA '
+        'manuellement une fois (option dans la sidebar)'
+        '</div>'
+        '</section>',
+        unsafe_allow_html=True,
+    )
+
 if _scrape_state.get("active"):
     _render_progress_panel(progress_slot, _scrape_state)
     # Polling : on rafraîchit chaque 1.5 s tant que le thread tourne
@@ -2140,7 +2195,8 @@ elif _phase == PHASE_DONE:
 elif _phase == PHASE_CANCELLED:
     progress_slot.warning("Recherche annulée par l'utilisateur.",
                           icon=":material/cancel:")
-elif _phase == PHASE_ERROR:
+elif _phase == PHASE_ERROR and not _scrape_state.get("google_blocked"):
+    # Si c'est une autre erreur (pas un Google block, déjà bannerisé ci-dessus)
     progress_slot.error(f"Erreur durant le scraping : {_scrape_state.get('error')}",
                         icon=":material/error:")
 
