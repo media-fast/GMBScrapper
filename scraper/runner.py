@@ -61,8 +61,15 @@ def init_scrape_state() -> dict:
         "phase": PHASE_IDLE,
         "started_at": None,
         "ended_at": None,
-        "communes_done": 0,
-        "communes_total": 0,
+        # 2 compteurs distincts pour ne pas mélanger les axes :
+        #  - villes : nombre de communes uniques traitées (1 ville = N variantes)
+        #  - variants : nombre de couples (variante métier × ville) scrapés
+        # Ex : Waterloo + métier "dentiste" expansé en 4 variantes →
+        #      cities_total=1, variants_total=4.
+        "cities_done": 0,
+        "cities_total": 0,
+        "variants_done": 0,
+        "variants_total": 0,
         # Compteurs distincts pour la transparence (cf. _render_*_panel)
         "prospects_brut": 0,        # Fiches brutes scrapées sur Google (monotone)
         "prospects_found": 0,       # Fiches restantes après chaque filtre (décroît)
@@ -128,8 +135,12 @@ def _run_pipeline(
     state["phase"] = PHASE_SCRAPING
     state["started_at"] = datetime.now()
     state["ended_at"] = None
-    state["communes_total"] = len(metiers) * len(cities)
-    state["communes_done"] = 0
+    # Dédup défensif des villes (si l'UI laisse passer un doublon)
+    unique_cities = list(dict.fromkeys(cities))
+    state["cities_total"] = len(unique_cities)
+    state["cities_done"] = 0
+    state["variants_total"] = len(metiers) * len(unique_cities)
+    state["variants_done"] = 0
     state["prospects_brut"] = 0
     state["prospects_found"] = 0
     state["vat_enriched"] = 0
@@ -164,17 +175,20 @@ def _run_pipeline(
         # `scrape_errors` est ré-exposé dans le state (init ci-dessus) pour
         # rester visible dans le panel Done après la fin du scrape.
         scrape_errors = state["scrape_errors"]
-        # --- Scraping ville par ville (granularité fine pour la progression) ---
+        # --- Scraping ville par ville × variante métier ---
+        # Loops : cities OUTER, metiers INNER. Cette structure permet de
+        # marquer une ville comme "done" dès que toutes ses variantes sont
+        # scrapées (sémantique naturelle du compteur cities_done).
         # try/except par (métier, ville) : si UN scrape plante (Playwright
-        # crash, timeout, CAPTCHA, etc.), on log l'erreur et on continue avec
-        # la ville suivante au lieu de tout perdre.
-        for m in metiers:
+        # crash, timeout, CAPTCHA, etc.), on log l'erreur et on continue
+        # avec la variante suivante au lieu de tout perdre.
+        for city in unique_cities:
             if _cancelled():
                 state["phase"] = PHASE_CANCELLED
                 _log("Recherche annulée par l'utilisateur.")
                 return
-            _log(f"Scraping métier : {m}")
-            for city in cities:
+            _log(f"Ville : {city} ({len(metiers)} variante(s) métier)")
+            for m in metiers:
                 if _cancelled():
                     state["phase"] = PHASE_CANCELLED
                     _log("Recherche annulée par l'utilisateur.")
@@ -232,12 +246,15 @@ def _run_pipeline(
                     scrape_errors.append(err_msg)
                     _log(err_msg)
 
-                state["communes_done"] += 1
+                state["variants_done"] += 1
                 # prospects_brut = total scrapé sur Google (monotone)
                 # prospects_found = pareil pendant le scrape, sera décrémenté
                 # par chaque filtre qui suit
                 state["prospects_brut"] = len(businesses)
                 state["prospects_found"] = len(businesses)
+
+            # Toutes les variantes de cette ville sont traitées
+            state["cities_done"] += 1
 
         if scrape_errors:
             _log(f"Scraping terminé : {len(businesses)} fiches brutes "

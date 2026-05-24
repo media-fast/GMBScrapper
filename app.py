@@ -1923,19 +1923,25 @@ def _format_duration(started_at, ended_at=None) -> str:
 
 def _render_progress_panel(slot, state: dict) -> None:
     """Rend le panel sombre 'Recherche en cours' depuis le scrape_state."""
-    communes_done = state.get("communes_done", 0)
-    communes_total = max(state.get("communes_total", 1), 1)
-    pct = min(100, int(100 * communes_done / communes_total))
+    # 2 compteurs distincts : villes (1 par commune) vs variantes (1 par
+    # couple variante × ville). Ex : Waterloo × dentiste expansé en 4 →
+    # cities = 1, variants = 4. La barre de progression utilise variants
+    # (granularité la plus fine pour une animation fluide).
+    cities_done = state.get("cities_done", 0)
+    cities_total = max(state.get("cities_total", 1), 1)
+    variants_done = state.get("variants_done", 0)
+    variants_total = max(state.get("variants_total", 1), 1)
+    pct = min(100, int(100 * variants_done / variants_total))
     prospects = state.get("prospects_found", 0)
     vat = state.get("vat_enriched", 0)
     last_log = _safe_html(state.get("last_log") or "")
 
-    # ETA estimée
+    # ETA estimée sur la granularité variantes (plus précise que par ville)
     started = state.get("started_at")
-    if started and communes_done > 0:
+    if started and variants_done > 0:
         elapsed = (datetime.now() - started).total_seconds()
-        per_unit = elapsed / communes_done
-        eta_sec = max(0, int(per_unit * (communes_total - communes_done)))
+        per_unit = elapsed / variants_done
+        eta_sec = max(0, int(per_unit * (variants_total - variants_done)))
         eta_mins, eta_s = divmod(eta_sec, 60)
         eta_html = (f"{eta_mins}<span class='pp-sm'>min {eta_s:02d} s</span>"
                     if eta_mins else f"{eta_s}<span class='pp-sm'>sec</span>")
@@ -1954,7 +1960,8 @@ def _render_progress_panel(slot, state: dict) -> None:
     metiers = state.get("metiers") or []
     cities = state.get("cities") or []
     meta = (f"Phase : {phase_text} · Lancée il y a "
-            f"{_format_duration(started)} · {len(cities)} communes × {len(metiers)} métiers")
+            f"{_format_duration(started)} · {len(cities)} ville(s) × "
+            f"{len(metiers)} variante(s) métier")
 
     # 2 compteurs distincts : bruts (monotone) vs après filtres (décroît)
     brut = state.get("prospects_brut", 0)
@@ -1973,8 +1980,10 @@ def _render_progress_panel(slot, state: dict) -> None:
         f'<div class="pp-meta">{meta}</div>'
         f'</div></div></div>'
         f'<div class="pp-stats">'
-        f'<div><div class="pp-label">Communes traitées</div>'
-        f'<div class="pp-value">{communes_done}<span class="pp-sm">/ {communes_total}</span></div></div>'
+        f'<div><div class="pp-label">Villes</div>'
+        f'<div class="pp-value">{cities_done}<span class="pp-sm">/ {cities_total}</span></div></div>'
+        f'<div><div class="pp-label">Variantes métier</div>'
+        f'<div class="pp-value">{variants_done}<span class="pp-sm">/ {variants_total}</span></div></div>'
         f'<div><div class="pp-label">Prospects (après filtres)</div>'
         f'<div>{found_html}</div></div>'
         f'<div><div class="pp-label">Enrichissement TVA</div>'
@@ -1991,7 +2000,8 @@ def _render_progress_panel(slot, state: dict) -> None:
 
 def _render_done_panel(slot, state: dict) -> None:
     """Panel vert 'Recherche terminée' avec breakdown détaillé des pertes."""
-    communes_total = state.get("communes_total", 0)
+    cities_total = state.get("cities_total", 0)
+    variants_total = state.get("variants_total", 0)
     brut = state.get("prospects_brut", 0)
     final = state.get("result_count", 0)
     vat = state.get("vat_enriched", 0)
@@ -2060,12 +2070,14 @@ def _render_done_panel(slot, state: dict) -> None:
         f'<div class="pp-head"><div class="pp-title-wrap">'
         f'<span class="pp-pulse" style="background:#FFF;animation:none;box-shadow:none;"></span>'
         f'<div class="pp-title"><h3>Recherche terminée</h3>'
-        f'<div class="pp-meta">{communes_total} communes traitées en {duration} · '
-        f'{brut} bruts → <strong>{final} finaux</strong></div>'
+        f'<div class="pp-meta">{cities_total} ville(s) × {variants_total} variante(s) '
+        f'en {duration} · {brut} bruts → <strong>{final} finaux</strong></div>'
         f'</div></div></div>'
         f'<div class="pp-stats">'
-        f'<div><div class="pp-label">Communes traitées</div>'
-        f'<div class="pp-value">{communes_total}</div></div>'
+        f'<div><div class="pp-label">Villes</div>'
+        f'<div class="pp-value">{cities_total}</div></div>'
+        f'<div><div class="pp-label">Variantes métier</div>'
+        f'<div class="pp-value">{variants_total}</div></div>'
         f'<div><div class="pp-label">Prospects finaux</div>'
         f'<div class="pp-value">{final}<span class="pp-sm">/ {brut} bruts</span></div></div>'
         f'<div><div class="pp-label">Enrichissement TVA</div>'
