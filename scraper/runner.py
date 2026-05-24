@@ -32,7 +32,7 @@ from typing import Any, Callable, MutableMapping
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 from .filters import filter_by_city
-from .gmaps import scrape_google_maps
+from .gmaps import GoogleBlockedError, scrape_google_maps
 
 
 # Phases possibles de scrape_state["phase"]
@@ -92,6 +92,11 @@ def init_scrape_state() -> dict:
         # Stats de retry (au cas où Google a hiccup temporaire)
         "retried_count": 0,
         "retry_succeeded_count": 0,
+        # ⛔ Drapeau de blocage Google (IP bannie / CAPTCHA persistant).
+        # Mis à True dès qu'une GoogleBlockedError est levée par le scraper.
+        # Affiche un bandeau rouge dédié sur l'UI principale.
+        "google_blocked": False,
+        "google_blocked_reason": "",
         "metiers": [],
         "cities": [],
         "result_search_id": None,
@@ -163,6 +168,8 @@ def _run_pipeline(
     state["scrape_errors"] = []
     state["retried_count"] = 0
     state["retry_succeeded_count"] = 0
+    state["google_blocked"] = False
+    state["google_blocked_reason"] = ""
 
     def _cancelled() -> bool:
         return bool(state.get("cancel_requested", False))
@@ -221,6 +228,19 @@ def _run_pipeline(
                             state["retry_succeeded_count"] += 1
                             _log(f"↻ Retry réussi pour {m} × {city}")
                         break
+                    except GoogleBlockedError as e:
+                        # ⛔ IP bannie / CAPTCHA persistant : aucun intérêt à
+                        # retry, on stoppe tout le pipeline immédiatement et
+                        # on affiche un bandeau rouge dédié sur l'UI.
+                        state["google_blocked"] = True
+                        state["google_blocked_reason"] = str(e)
+                        state["phase"] = PHASE_ERROR
+                        state["error"] = (
+                            "Google a bloqué les requêtes depuis cette IP. "
+                            "Voir le bandeau d'alerte en haut de la page."
+                        )
+                        _log(f"⛔ GOOGLE BLOCKED: {e}. Pipeline arrêté.")
+                        return
                     except Exception as e:  # noqa: BLE001
                         last_err = e
                         if attempt < SCRAPE_MAX_RETRIES:
