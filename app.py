@@ -1221,7 +1221,7 @@ def _render_ai_briefing_section(biz: dict) -> None:
         button_label = "Régénérer" if cached else "Générer le briefing"
         button_type = "secondary" if cached else "primary"
         if st.button(button_label, key=f"gen_{dedup}",
-                     type=button_type, use_container_width=True):
+                     type=button_type, width="stretch"):
             with st.spinner("Génération du briefing IA… (~5 s)"):
                 res = generate_briefing(biz)
             if res["ok"]:
@@ -1360,7 +1360,7 @@ def _render_seo_audit_section(biz: dict) -> None:
         button_label = "Régénérer l'audit" if cached else "Lancer l'audit SEO"
         button_type = "secondary" if cached else "primary"
         if st.button(button_label, key=f"audit_{dedup}",
-                     type=button_type, use_container_width=True):
+                     type=button_type, width="stretch"):
             with st.spinner("Audit SEO + Google Business en cours… (~3 s)"):
                 res = run_full_audit(biz)
             save_seo_audit(dedup, res)
@@ -1550,7 +1550,7 @@ def render_business_card(biz: dict, key_suffix: str = "") -> None:
             if st.button(
                 "Appeler",
                 key=f"call_{safe_key}",
-                use_container_width=True,
+                width="stretch",
                 disabled=call_disabled,
                 help="Click-to-call Ringover" if not call_disabled else
                      ("Pas de numéro" if not phone else "Configure RINGOVER_API_KEY"),
@@ -1561,7 +1561,7 @@ def render_business_card(biz: dict, key_suffix: str = "") -> None:
                 else:
                     st.toast(res['message'], icon=":material/error:")
         with b2:
-            if st.button("Détails", key=f"det_{safe_key}", use_container_width=True):
+            if st.button("Détails", key=f"det_{safe_key}", width="stretch"):
                 show_business_details(biz)
 
         # Changement de statut (selectbox)
@@ -1881,13 +1881,13 @@ with st.container(border=True):
         if _scrape_active:
             # Pendant un scrape, "Lancer" est remplacé par "Annuler"
             if st.button("Annuler la recherche", type="secondary",
-                         use_container_width=True, key="cancel_btn"):
+                         width="stretch", key="cancel_btn"):
                 request_cancel(st.session_state.scrape_state)
                 st.rerun()
             run = False
         else:
             run = st.button(
-                "Lancer la recherche", type="primary", use_container_width=True,
+                "Lancer la recherche", type="primary", width="stretch",
                 disabled=not (metiers and cities),
             )
 
@@ -2301,7 +2301,7 @@ with tab_results:
                     "Télécharger Excel",
                     data=excel_bytes, file_name=fname_xlsx,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
+                    width="stretch",
                     key=f"xlsx_{chosen_id}",
                 )
             with ah3:
@@ -2311,11 +2311,11 @@ with tab_results:
                     "Exporter pour Ringover",
                     data=csv_bytes, file_name=fname_csv,
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     key=f"csv_{chosen_id}",
                 )
             with ah4:
-                if st.button("Supprimer", use_container_width=True,
+                if st.button("Supprimer", width="stretch",
                              type="secondary", key=f"del_{chosen_id}",
                              help="Supprime ce scrape de l'historique (les entreprises restent en base)"):
                     delete_search(chosen_id)
@@ -2576,7 +2576,7 @@ with tab_results:
                                          help="Appeler via Ringover" if (phone and is_configured())
                                               else ("Pas de numéro" if not phone
                                                     else "Configure RINGOVER_API_KEY"),
-                                         use_container_width=True):
+                                         width="stretch"):
                                 res = click_to_call(phone)
                                 if res["ok"]:
                                     st.toast(res["message"], icon=":material/call_made:")
@@ -2586,7 +2586,7 @@ with tab_results:
                             if st.button(":material/info:",
                                          key=f"info_row_{chosen_id}_{idx}",
                                          help="Voir les détails",
-                                         use_container_width=True):
+                                         width="stretch"):
                                 show_business_details(b)
                         st.markdown(
                             '<div style="border-bottom:1px solid var(--line);'
@@ -2611,12 +2611,12 @@ with tab_results:
                     pcols = st.columns([1, 1, 2, 1, 1])
                     with pcols[0]:
                         if st.button("«", disabled=current_page == 0,
-                                     key=f"first_{chosen_id}", use_container_width=True):
+                                     key=f"first_{chosen_id}", width="stretch"):
                             st.session_state[page_key] = 0
                             st.rerun()
                     with pcols[1]:
                         if st.button("‹", disabled=current_page == 0,
-                                     key=f"prev_{chosen_id}", use_container_width=True):
+                                     key=f"prev_{chosen_id}", width="stretch"):
                             st.session_state[page_key] = max(0, current_page - 1)
                             st.rerun()
                     with pcols[2]:
@@ -2628,12 +2628,12 @@ with tab_results:
                         )
                     with pcols[3]:
                         if st.button("›", disabled=current_page >= total_pages - 1,
-                                     key=f"next_{chosen_id}", use_container_width=True):
+                                     key=f"next_{chosen_id}", width="stretch"):
                             st.session_state[page_key] = min(total_pages - 1, current_page + 1)
                             st.rerun()
                     with pcols[4]:
                         if st.button("»", disabled=current_page >= total_pages - 1,
-                                     key=f"last_{chosen_id}", use_container_width=True):
+                                     key=f"last_{chosen_id}", width="stretch"):
                             st.session_state[page_key] = total_pages - 1
                             st.rerun()
 
@@ -2645,7 +2645,7 @@ with tab_results:
                 with st.expander(f"{len(skipped)} entreprises écartées (déjà trouvées avant)"):
                     sk_df = to_dataframe(skipped)
                     show = [c for c in ["Nom", "Localité", "Numéro TVA", "Vue pour la 1re fois"] if c in sk_df.columns]
-                    st.dataframe(sk_df[show], use_container_width=True, hide_index=True)
+                    st.dataframe(sk_df[show], width="stretch", hide_index=True)
 
     if st.session_state.log:
         with st.expander("Journal d'exécution"):
@@ -2694,7 +2694,7 @@ with tab_campaign:
         edited = st.data_editor(
             editor_df,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             height=460,
             column_config={
                 "dedup_key": None,
@@ -2732,7 +2732,7 @@ with tab_campaign:
         a1, a2, a3 = st.columns(3)
         with a1:
             if st.button("Envoyer ces contacts vers Ringover",
-                         use_container_width=True, disabled=not is_configured()):
+                         width="stretch", disabled=not is_configured()):
                 res = push_contacts(camp)
                 (st.success if res["ok"] else st.error)(res["message"])
                 if res.get("errors"):
@@ -2740,7 +2740,7 @@ with tab_campaign:
                         st.code("\n".join(res["errors"]), language="text")
         with a2:
             if st.button("Synchroniser les appels passés",
-                         use_container_width=True, disabled=not is_configured()):
+                         width="stretch", disabled=not is_configured()):
                 res = sync_call_statuses()
                 if res["ok"]:
                     st.success(res["message"])
@@ -2753,7 +2753,7 @@ with tab_campaign:
                 data=ringover_csv(camp),
                 file_name=f"ringover_contacts_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
         st.markdown(
@@ -2768,7 +2768,7 @@ with tab_campaign:
             pick = cc1.selectbox("Entreprise à appeler", list(labels.keys()),
                                  label_visibility="collapsed")
             with cc2:
-                if st.button("Appeler maintenant", use_container_width=True,
+                if st.button("Appeler maintenant", width="stretch",
                              disabled=not is_configured()):
                     res = click_to_call(labels[pick]["phone"])
                     (st.success if res["ok"] else st.error)(res["message"])
@@ -2784,7 +2784,7 @@ with tab_dropped:
     if dropped:
         st.caption(f"{len(dropped)} fiches retournées par Google mais hors des villes recherchées. "
                    "Désactive le filtrage strict pour les inclure.")
-        st.dataframe(to_dataframe(dropped), use_container_width=True, hide_index=True, height=420)
+        st.dataframe(to_dataframe(dropped), width="stretch", hide_index=True, height=420)
     else:
         st.info("Aucune fiche écartée par le filtre ville.")
 
@@ -2798,7 +2798,7 @@ with tab_history:
             "id": "N°", "query": "Métier", "cities": "Villes", "ran_at": "Date",
             "total": "Total", "new_count": "Nouvelles",
         })[["N°", "Date", "Métier", "Villes", "Total", "Nouvelles"]]
-        st.dataframe(sdf, use_container_width=True, hide_index=True, height=240)
+        st.dataframe(sdf, width="stretch", hide_index=True, height=240)
     else:
         st.info("Aucune recherche enregistrée pour l'instant.")
 
@@ -2813,7 +2813,7 @@ with tab_history:
         })
         cols = [c for c in ["Nom", "Ville", "Métier", "TVA", "Téléphone", "Dirigeant(s)", "1re fois", "Dernière fois"]
                 if c in kdf.columns]
-        st.dataframe(kdf[cols], use_container_width=True, hide_index=True, height=360)
+        st.dataframe(kdf[cols], width="stretch", hide_index=True, height=360)
 
         st.download_button(
             "Exporter tout l'historique (CSV)",
