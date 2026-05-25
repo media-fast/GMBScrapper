@@ -11,6 +11,7 @@ from .ai_briefing import (
     is_configured as ai_is_configured,
     provider_label as ai_provider_label,
 )
+from . import ai_synonyms
 
 __all__ = [
     "is_configured",
@@ -22,4 +23,5 @@ __all__ = [
     "generate_briefing",
     "ai_is_configured",
     "ai_provider_label",
+    "ai_synonyms",
 ]

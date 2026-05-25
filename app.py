@@ -50,6 +50,8 @@ from data import (
     all_arrondissement_labels,
     expand_arrondissements_to_communes,
 )
+from data.geo import all_known_commune_names, communes_within_radius
+from integrations import ai_synonyms
 from storage import (
     CALL_STATUSES,
     bulk_update_campaign,
@@ -1600,9 +1602,15 @@ def _init_state():
         "last_run": None,
         "last_search_id": None,
         "selected_search_id": None,
-        "preset_query": "opticien",
-        "preset_cities": "Waterloo\nBraine-l'Alleud\nNivelles\nLa Hulpe\nHalle",
+        # Champs vides par défaut : l'utilisateur démarre toujours sur un
+        # formulaire propre. Évite les recherches involontaires sur les villes
+        # / métiers laissés là par accident.
+        "preset_query": "",
+        "preset_cities": "",
         "scrape_state": init_scrape_state(),
+        # Cache des variantes IA par métier custom (évite de re-appeler l'API
+        # à chaque rerun Streamlit). Reset au refresh complet de l'app.
+        "ai_variants_cache": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1700,7 +1708,7 @@ with st.container(border=True):
     selected_metiers = st.multiselect(
         "Métiers ciblés",
         options=sorted(set(COMMON_METIERS)),
-        default=["opticien"],
+        default=[],
         placeholder="Choisis un ou plusieurs métiers (ou tape pour chercher)…",
         help="Chaque métier déclenche une recherche sur chaque commune. "
              "Pour un métier non listé, ajoute-le dans le champ Métier(s) personnalisé(s) ci-dessous.",
@@ -1723,7 +1731,81 @@ with st.container(border=True):
              "(ex. opticien → lunetterie, magasin de lunettes…). Multiplie typiquement "
              "le nombre de prospects trouvés par 2-3.",
     )
-    metiers = expand_metier_synonyms(metiers_base, enabled=use_synonyms)
+
+    # Variantes statiques (dict METIER_SYNONYMS) pour les métiers connus
+    metiers_static = expand_metier_synonyms(metiers_base, enabled=use_synonyms)
+
+    # ── Variantes IA pour les métiers PERSONNALISÉS (non présents dans le dict) ──
+    # Si l'utilisateur a tapé un métier custom et que le toggle est ON, on
+    # propose un bouton "Proposer des variantes IA". Les variantes générées
+    # sont mises en cache (st.session_state.ai_variants_cache) pour ne pas
+    # re-appeler l'API à chaque rerun. L'user peut éditer/cocher/décocher.
+    custom_with_no_static_variants = [
+        m for m in custom_metiers
+        if expand_metier_synonyms([m], enabled=True) == [m]  # 1 seule = pas de synonymes dans le dict
+    ]
+
+    ai_extra_variants: list[str] = []
+    if use_synonyms and custom_with_no_static_variants:
+        with st.container(border=True):
+            st.markdown(
+                "<div style='font-size:0.82rem;font-weight:600;margin-bottom:6px;'>"
+                "Variantes IA pour vos métiers personnalisés</div>",
+                unsafe_allow_html=True,
+            )
+            ai_ok = ai_synonyms.is_configured()
+            if not ai_ok:
+                st.caption(
+                    "ℹ Aucune clé IA configurée (OPENAI_API_KEY ou ANTHROPIC_API_KEY). "
+                    "Les métiers personnalisés seront scrapés tels quels, sans variantes."
+                )
+            for m in custom_with_no_static_variants:
+                cache_key = m.lower().strip()
+                cached = st.session_state.ai_variants_cache.get(cache_key)
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.markdown(f"**« {m} »**", help=f"Métier personnalisé : {m}")
+                with c2:
+                    if st.button(
+                        ("Régénérer" if cached else "Proposer"),
+                        key=f"ai_var_{cache_key}",
+                        disabled=not ai_ok,
+                        width="stretch",
+                    ):
+                        with st.spinner(f"Génération variantes pour « {m} »…"):
+                            res = ai_synonyms.suggest_variants(m)
+                        if res["ok"]:
+                            st.session_state.ai_variants_cache[cache_key] = res["variants"]
+                            cached = res["variants"]
+                        else:
+                            st.error(f"Échec : {res['message']}")
+
+                if cached:
+                    # Pré-sélection : toutes les variantes cochées par défaut
+                    state_sel_key = f"ai_var_sel_{cache_key}"
+                    if state_sel_key not in st.session_state:
+                        st.session_state[state_sel_key] = list(cached)
+                    sel = st.multiselect(
+                        f"Variantes pour « {m} » (décocher pour exclure)",
+                        options=cached,
+                        default=st.session_state[state_sel_key],
+                        key=state_sel_key,
+                        label_visibility="collapsed",
+                    )
+                    # Métier d'origine ajouté ailleurs (déjà dans metiers_base)
+                    # → on ne garde ici que les VARIANTES (≠ métier d'origine)
+                    extra = [v for v in sel if v.lower() != m.lower()]
+                    ai_extra_variants.extend(extra)
+
+    # Concaténation finale : statiques + IA (avec dédup case-insensitive
+    # tout en conservant l'ordre d'apparition)
+    metiers = list(metiers_static)
+    seen_lower = {v.lower() for v in metiers}
+    for v in ai_extra_variants:
+        if v.lower() not in seen_lower:
+            seen_lower.add(v.lower())
+            metiers.append(v)
+
     if use_synonyms and len(metiers) > len(metiers_base):
         st.caption(
             f"**{len(metiers_base)} métier(s) saisi(s)** → **{len(metiers)} requêtes** "
@@ -1738,18 +1820,19 @@ with st.container(border=True):
         'Zone de prospection</div>',
         unsafe_allow_html=True,
     )
+    ZONE_MODES = ["Par arrondissement", "Par commune", "Par rayon"]
     try:
         zone_mode = st.segmented_control(
             "Mode",
-            options=["Par arrondissement", "Par commune"],
-            default="Par arrondissement",
+            options=ZONE_MODES,
+            default=None,  # aucun mode pré-sélectionné
             label_visibility="collapsed",
             key="zone_mode",
         )
     except AttributeError:
         zone_mode = st.radio(
             "Mode",
-            options=["Par arrondissement", "Par commune"],
+            options=ZONE_MODES,
             horizontal=True,
             label_visibility="collapsed",
             key="zone_mode",
@@ -1767,11 +1850,10 @@ with st.container(border=True):
                     arr_options.append(label)
                     label_to_arr[label] = name
 
-        default_label = next((lab for lab in arr_options if "Nivelles" in lab), arr_options[0])
         selected_labels = st.multiselect(
             "Arrondissements à scraper",
             options=arr_options,
-            default=[default_label],
+            default=[],
             placeholder="Tape une province ou un arrondissement…",
         )
         selected_arrondissements = [label_to_arr[lab] for lab in selected_labels]
@@ -1783,7 +1865,7 @@ with st.container(border=True):
             )
         else:
             st.caption("Aucun arrondissement sélectionné.")
-    else:
+    elif zone_mode == "Par commune":
         cities_raw = st.text_area(
             "Communes ciblées (une par ligne)",
             value=st.session_state.preset_cities,
@@ -1793,6 +1875,50 @@ with st.container(border=True):
         cities = [c.strip() for c in cities_raw.splitlines() if c.strip()]
         if cities:
             st.caption(f"**{len(cities)} commune(s)** ciblée(s)")
+    elif zone_mode == "Par rayon":
+        # Sélection d'une ville centrale + slider rayon → calcul Haversine
+        # sur le dataset BELGIAN_COMMUNE_COORDS (~150 communes principales).
+        # Les communes non géocodées (datasets manquants) ne peuvent pas être
+        # incluses dans ce mode — bascule "Par commune" si besoin.
+        known_communes = all_known_commune_names()
+        r1, r2 = st.columns([2, 1])
+        with r1:
+            center_city = st.selectbox(
+                "Ville centrale",
+                options=[""] + known_communes,
+                index=0,
+                placeholder="Choisis une ville centrale…",
+                help=f"{len(known_communes)} communes géolocalisées disponibles. "
+                     "Pour une commune absente de la liste, utilise le mode « Par commune ».",
+            )
+        with r2:
+            radius_km = st.slider(
+                "Rayon (km)",
+                min_value=2,
+                max_value=50,
+                value=10,
+                step=1,
+                help="Toutes les communes belges connues à moins de X km du centre.",
+            )
+        if center_city:
+            in_radius = communes_within_radius(center_city, radius_km)
+            cities = [name for name, _ in in_radius]
+            if cities:
+                preview = ", ".join(
+                    f"{name} ({dist:.1f} km)" for name, dist in in_radius[:5]
+                )
+                more = f" + {len(cities) - 5} autres" if len(cities) > 5 else ""
+                st.caption(
+                    f"**{len(cities)} commune(s)** dans un rayon de "
+                    f"{radius_km} km autour de **{center_city}** : {preview}{more}"
+                )
+            else:
+                st.warning(
+                    f"Aucune commune connue à moins de {radius_km} km de "
+                    f"« {center_city} ». Augmente le rayon ou essaie une autre ville."
+                )
+        else:
+            st.caption("Choisis une ville centrale pour calculer le rayon.")
 
     # --- PARAMÈTRES (3 cards) ---
     st.markdown("")
