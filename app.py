@@ -2530,22 +2530,16 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   window.launchAuditWithLoader = launchAuditWithLoader;
 
   // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
-  // L'iframe Streamlit a un height fixe (2400px par défaut). Le contenu
-  // fait ~1000-1500px → on l'ajuste dynamiquement pour éviter le gros vide.
-  // window.frameElement marche car l'iframe est same-origin.
+  // Triple stratégie :
+  //  1. postMessage `streamlit:setFrameHeight` → API officielle Streamlit
+  //  2. window.frameElement.style.height direct
+  //  3. Walk-up sur les parents (Streamlit wrap parfois dans un conteneur
+  //     avec hauteur fixe — il faut aussi le resize)
   //
-  // BOUCLE INFINIE PRÉCÉDENTE ÉLIMINÉE : la cause était min-height:100vh
-  // sur body qui faisait grandir le body quand l'iframe grandissait.
-  // Cette propriété est retirée → resize stable.
-  //
-  // GARDE-FOUS :
-  //  - lastAppliedHeight : ignore changements < 2px (bruit)
-  //  - Math.min(h, 3000) : plafond de sécurité
+  // BOUCLE INFINIE PRÉCÉDENTE ÉLIMINÉE : min-height:100vh sur body retiré.
   let lastAppliedHeight = 0;
   function resizeFrameToContent() {{
     try {{
-      const frame = window.frameElement;
-      if (!frame) return;
       const h = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight
@@ -2553,7 +2547,41 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
       const clamped = Math.min(h + 8, 3000);
       if (Math.abs(clamped - lastAppliedHeight) < 2) return;
       lastAppliedHeight = clamped;
-      frame.style.height = clamped + 'px';
+
+      // 1. postMessage officiel Streamlit (mécanisme natif pour
+      //    components avec déclaration — sait pas si ça marche pour
+      //    components.v1.html mais ça coûte rien)
+      if (window.parent && window.parent.postMessage) {{
+        window.parent.postMessage({{
+          type: 'streamlit:setFrameHeight',
+          height: clamped
+        }}, '*');
+      }}
+
+      // 2. Set direct sur l'iframe element
+      const frame = window.frameElement;
+      if (frame) {{
+        frame.style.height = clamped + 'px';
+        frame.setAttribute('height', clamped);
+        // 3. Walk-up sur les parents (max 4 niveaux) pour resize les wrappers
+        let parent = frame.parentElement;
+        let depth = 0;
+        while (parent && depth < 4) {{
+          // Ne resize que les conteneurs Streamlit (data-testid="stIFrame" ou stElement…)
+          // pour ne pas casser le layout général
+          const tid = parent.getAttribute && parent.getAttribute('data-testid');
+          if (tid && (tid.includes('IFrame') || tid.includes('Element'))) {{
+            parent.style.height = clamped + 'px';
+            parent.style.minHeight = clamped + 'px';
+          }}
+          // Aussi : si le parent direct a une hauteur inline fixe, l'ajuster
+          if (depth === 0 && parent.style && parent.style.height) {{
+            parent.style.height = clamped + 'px';
+          }}
+          parent = parent.parentElement;
+          depth++;
+        }}
+      }}
     }} catch (e) {{
       console.error('resizeFrameToContent failed:', e);
     }}
