@@ -1508,12 +1508,16 @@ def show_business_details(biz: dict) -> None:
         with st.container(key="bd-hidden-audit-run"):
             if st.button("RUN_AUDIT_INTERNAL",
                          key=f"bd_run_audit_hidden_{safe_key}"):
-                with st.spinner("Audit SEO + Google Business en cours… (~3 s)"):
-                    res = run_full_audit(biz)
+                # PAS de st.spinner ici (sinon le dialog se ferme à cause
+                # du re-rendu Streamlit pendant le spinner). PAS de st.rerun()
+                # non plus (idem). Le loader visuel est injecté DANS l'iframe
+                # par JS au clic du bouton audit-cta, et reste affiché tant
+                # que Python n'a pas fini. Quand on revient, l'iframe est
+                # régénéré naturellement avec le résumé d'audit.
+                res = run_full_audit(biz)
                 save_seo_audit(dedup, res)
                 res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                cached_audit = res  # reflet immédiat sans attendre rerun
-                st.rerun()
+                cached_audit = res  # reflet immédiat dans le rendu courant
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
@@ -1689,16 +1693,18 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     website_block = ""
     if website:
         url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
-        # ─── Bouton audit-cta : onclick clique le bouton Streamlit caché ───
+        # ─── Bouton audit-cta : onclick utilise launchAuditWithLoader() ───
+        # qui affiche un spinner sur le bouton + un placeholder en dessous
+        # AVANT de cliquer le bouton Streamlit caché en parent.
         button_label = "Régénérer l'audit SEO" if cached_audit else "Lancer l'audit SEO du site"
         audit_button_html = f'''
-          <button onclick="(function(){{var b=window.parent.document.querySelector('.st-key-bd-hidden-audit-run button');if(b){{b.click();}}else{{console.error('hidden audit btn not found');}}}})()" class="audit-cta" type="button">
+          <button onclick="launchAuditWithLoader(this)" class="audit-cta" type="button">
             <span class="audit-cta__accent"></span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"/>
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            {button_label}
+            <span>{button_label}</span>
           </button>'''
 
         # ─── Affichage compact de l'audit (sous le bouton, si cache) ───
@@ -2097,8 +2103,19 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   .website-block__url {{ color: var(--ink-900); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .audit-cta {{ display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; background: var(--indigo-900); color: white; border: none; border-radius: 9px; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all .2s; width: 100%; justify-content: center; }}
   .audit-cta:hover {{ background: var(--indigo-700); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(52, 37, 175, 0.25); }}
+  .audit-cta:disabled {{ opacity: 0.7; cursor: wait; transform: none; box-shadow: none; }}
   .audit-cta svg {{ width: 13px; height: 13px; }}
   .audit-cta__accent {{ width: 6px; height: 6px; border-radius: 999px; background: var(--gold); box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.25); }}
+
+  /* Loader audit SEO : spinner + placeholder pendant la génération Python */
+  .audit-spinner {{ width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: audit-spin .8s linear infinite; flex-shrink: 0; }}
+  .audit-cta .audit-spinner {{ border-color: rgba(255,255,255,0.3); border-top-color: white; }}
+  .audit-loading-placeholder {{ margin-top: 12px; padding: 14px; background: var(--cream); border-radius: 11px; border: 1px solid var(--ink-100); display: flex; align-items: center; gap: 12px; }}
+  .audit-loading-placeholder .audit-spinner {{ border-color: var(--ink-200); border-top-color: var(--indigo-600); width: 16px; height: 16px; }}
+  .audit-loading-placeholder__text {{ flex: 1; }}
+  .audit-loading-placeholder__title {{ font-size: 12px; font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }}
+  .audit-loading-placeholder__sub {{ font-size: 11px; color: var(--ink-500); }}
+  @keyframes audit-spin {{ to {{ transform: rotate(360deg); }} }}
 
   .admins-card {{ padding: 20px 24px; }}
   .admins-card__title {{ display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo-700); margin-bottom: 14px; }}
@@ -2386,6 +2403,53 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
       header.setAttribute('aria-expanded', acc.classList.contains('is-open'));
     }});
   }});
+
+  // ─── Audit SEO : loader visuel pendant la génération Python ─────────
+  // 1. Désactive le bouton + montre un spinner DESSUS
+  // 2. Ajoute un placeholder « Audit en cours » EN DESSOUS (où apparaîtra
+  //    le résumé final)
+  // 3. Trigger le bouton Streamlit caché en parent (lance run_full_audit)
+  // 4. Quand Python finit, l'iframe est re-rendu → loader remplacé par le
+  //    vrai résumé compact (cached_audit injecté côté serveur)
+  function launchAuditWithLoader(btn) {{
+    if (btn.disabled) return;
+    btn.disabled = true;
+    // Remplace contenu du bouton par spinner + texte « Génération… »
+    btn.innerHTML =
+      '<div class="audit-spinner"></div>' +
+      '<span>Génération en cours…</span>';
+    // Insère le placeholder de résultat sous le bouton (si pas déjà là)
+    const block = btn.closest('.website-block');
+    if (block && !block.querySelector('.audit-loading-placeholder')) {{
+      const ph = document.createElement('div');
+      ph.className = 'audit-loading-placeholder';
+      ph.innerHTML =
+        '<div class="audit-spinner"></div>' +
+        '<div class="audit-loading-placeholder__text">' +
+        '<div class="audit-loading-placeholder__title">Audit SEO en cours…</div>' +
+        '<div class="audit-loading-placeholder__sub">Analyse du site web et de Google Business (~3 s)</div>' +
+        '</div>';
+      block.appendChild(ph);
+    }}
+    // Trigger le bouton Streamlit caché dans le parent
+    try {{
+      const parentBtn = window.parent.document.querySelector(
+        '.st-key-bd-hidden-audit-run button'
+      );
+      if (parentBtn) {{
+        parentBtn.click();
+      }} else {{
+        console.error('Hidden audit-run Streamlit button not found in parent');
+        // Rollback du loader si impossible
+        btn.disabled = false;
+      }}
+    }} catch (e) {{
+      console.error('Failed to click parent audit button:', e);
+      btn.disabled = false;
+    }}
+  }}
+  // Expose globalement pour que onclick="launchAuditWithLoader(this)" marche
+  window.launchAuditWithLoader = launchAuditWithLoader;
 </script>
 
 </body>
