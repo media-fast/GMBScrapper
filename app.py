@@ -1488,44 +1488,49 @@ def render_detail_page(biz: dict) -> None:
                 pass
             st.rerun()
 
-    # ─────────────── CSS hide pour le bouton Streamlit caché ─────────────
-    # Le container `.st-key-bd-hidden-audit-run` contient le bouton trigger
-    # déclenché par JS depuis l'iframe — doit rester invisible mais cliquable
-    # programmatiquement.
+    # ─────────────── CSS scopés à la page détail ──────────────────────────
+    # 1. Hide du bouton Streamlit caché qui sert de trigger pour l'audit SEO
+    #    (le JS dans l'iframe le clique programmatiquement)
+    # 2. Force les wrappers Streamlit de l'iframe à `height: auto` pour
+    #    qu'ils s'adaptent à la hauteur réelle de l'iframe (sinon ils gardent
+    #    la hauteur initiale 2400px = vide blanc en bas).
+    #    Cible :
+    #      - data-testid="stIFrame" (l'iframe + ses wrappers Streamlit)
+    #      - .stIFrame (classe stable)
+    #      - .st-emotion-cache-4rsbii (wrapper signalé par utilisateur)
+    #      - data-testid="stElementContainer" qui contient l'iframe
+    _detail_page_css = """
+<style>
+/* ─── Trigger Streamlit caché (cliqué par JS depuis l'iframe) ──────── */
+.st-key-bd-hidden-audit-run {
+    position: absolute !important;
+    left: -9999px !important;
+    top: -9999px !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+.st-key-bd-hidden-audit-run * {
+    visibility: hidden !important;
+}
+
+/* ─── Wrappers iframe : adapter au contenu (kill vide blanc) ──────── */
+.st-emotion-cache-4rsbii,
+[data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]),
+[data-testid="stElementContainer"]:has(> iframe.stIFrame) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+}
+/* L'iframe lui-même garde une hauteur (set par le JS via getBoundingClientRect),
+   ne PAS forcer height: auto sur lui (sinon collapse à 0). */
+</style>"""
     try:
-        st.html("""
-<style>
-.st-key-bd-hidden-audit-run {
-    position: absolute !important;
-    left: -9999px !important;
-    top: -9999px !important;
-    width: 1px !important;
-    height: 1px !important;
-    overflow: hidden !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-}
-.st-key-bd-hidden-audit-run * {
-    visibility: hidden !important;
-}
-</style>""")
+        st.html(_detail_page_css)
     except AttributeError:
-        st.markdown("""
-<style>
-.st-key-bd-hidden-audit-run {
-    position: absolute !important;
-    left: -9999px !important;
-    top: -9999px !important;
-    width: 1px !important;
-    height: 1px !important;
-    overflow: hidden !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-}
-.st-key-bd-hidden-audit-run * {
-    visibility: hidden !important;
-}
-</style>""", unsafe_allow_html=True)
+        st.markdown(_detail_page_css, unsafe_allow_html=True)
 
     # ─────────────── ACTION ROW NATIVE (au-dessus de l'iframe) ───────────────
     # Deux actions principales : Appeler (Ringover) + Changer statut.
