@@ -4603,10 +4603,84 @@ with st.container(border=True):
 
 st.markdown("")
 
+# ─────────────── CSS modern pill design pour les tabs top-level ──────
+# Scopé via .st-key-main-app-tabs pour ne PAS affecter d'autres tabs
+# dans l'app (notamment ceux à l'intérieur de l'iframe de la fiche détail).
+_main_tabs_css = """
+<style>
+/* Wrapper : padding + fond paper + ombre douce */
+.st-key-main-app-tabs [data-baseweb="tab-list"] {
+    gap: 6px !important;
+    padding: 6px !important;
+    background: linear-gradient(180deg, #FFFFFF, #FBF9F4) !important;
+    border: 1px solid #EFEDF7 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 2px 8px rgba(26, 14, 92, 0.04) !important;
+    width: fit-content !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+/* Cache les borders/highlights natifs de BaseWeb */
+.st-key-main-app-tabs [data-baseweb="tab-border"],
+.st-key-main-app-tabs [data-baseweb="tab-highlight"] {
+    display: none !important;
+}
+/* Chaque tab : pill avec transition smooth */
+.st-key-main-app-tabs [data-baseweb="tab-list"] button[data-baseweb="tab"] {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 10px 20px !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #6B6890 !important;
+    letter-spacing: 0.01em !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    margin: 0 !important;
+    height: auto !important;
+    min-height: 38px !important;
+    position: relative !important;
+}
+/* Hover : remonte légèrement le texte vers ink-900 + fond subtil */
+.st-key-main-app-tabs [data-baseweb="tab-list"] button[data-baseweb="tab"]:hover {
+    color: #1A0E5C !important;
+    background: rgba(79, 63, 240, 0.06) !important;
+}
+/* Tab ACTIF : pill indigo-900 + texte blanc + shadow gold subtile */
+.st-key-main-app-tabs [data-baseweb="tab-list"] button[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(135deg, #1A0E5C, #3425AF) !important;
+    color: white !important;
+    box-shadow:
+        0 4px 12px rgba(26, 14, 92, 0.25),
+        0 0 0 1px rgba(232, 168, 56, 0.15) inset !important;
+    transform: translateY(-1px) !important;
+}
+.st-key-main-app-tabs [data-baseweb="tab-list"] button[data-baseweb="tab"][aria-selected="true"]:hover {
+    background: linear-gradient(135deg, #1A0E5C, #4F3FF0) !important;
+}
+/* Hide le texte/markdown wrapping pour un rendu plus net */
+.st-key-main-app-tabs [data-baseweb="tab-list"] button[data-baseweb="tab"] p {
+    margin: 0 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: inherit !important;
+}
+/* Petit espace en bas après les tabs */
+.st-key-main-app-tabs [data-baseweb="tab-list"] {
+    margin-bottom: 12px !important;
+}
+</style>
+"""
+try:
+    st.html(_main_tabs_css)
+except AttributeError:
+    st.markdown(_main_tabs_css, unsafe_allow_html=True)
 
-tab_results, tab_campaign, tab_dropped, tab_history, tab_help = st.tabs(
-    ["Résultats", "Campagne d'appels", "Hors zone", "Historique", "Aide"]
-)
+with st.container(key="main-app-tabs"):
+    tab_results, tab_campaign, tab_dropped, tab_history, tab_help = st.tabs(
+        ["Résultats", "Campagne d'appels", "Hors zone", "Historique", "Aide"]
+    )
 
 
 def log(msg: str) -> None:
