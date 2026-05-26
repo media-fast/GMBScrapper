@@ -1244,6 +1244,22 @@ def _safe_html(s) -> str:
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+def _emit_html(html_string: str) -> None:
+    """Émet du HTML brut SANS sanitization.
+
+    Utilisé pour la fiche détail premium (rendue dans @st.dialog) où
+    st.markdown sanitize parfois agressivement (notamment les classes
+    CSS personnalisées dans certains contextes modaux), cassant les
+    styles `.bd-*`. st.html (Streamlit 1.33+) passe le HTML tel quel
+    sans aucune transformation.
+    """
+    try:
+        st.html(html_string)
+    except AttributeError:
+        # Fallback pour Streamlit < 1.33
+        st.markdown(html_string, unsafe_allow_html=True)
+
+
 def _score_color(score: int) -> tuple[str, str]:
     """Renvoie (couleur principale, couleur de fond) selon le score."""
     if score >= 80:
@@ -1382,9 +1398,15 @@ def show_business_details(biz: dict) -> None:
       - Shell 2 colonnes : sidebar 380px (identity + score + contact + dirigeants)
         + main avec 3 tabs (Évaluation / Identité légale / Historique)
     """
-    # NB : le CSS est injecté au niveau page (juste après _init_state()),
-    # pas ici — sinon il serait scopé au DOM de la colonne du bouton cliqué
-    # et disparaîtrait au prochain clic sur une autre fiche.
+    # ⚠ CSS RÉ-INJECTÉ DANS LE DIALOG : `@st.dialog` rend son contenu dans
+    # un portal BaseWeb séparé du DOM principal. La CSS injectée au niveau
+    # page ne cascade pas toujours vers ce portal (selon les versions
+    # Streamlit). Pour être SÛR que les styles s'appliquent, on ré-injecte
+    # le CSS à l'intérieur du dialog : ainsi le <style> est un enfant
+    # direct du portal et applique forcément. _emit_html utilise st.html
+    # (sans sanitization) pour ne pas perdre les balises <style>.
+    _emit_html(_BUSINESS_DETAIL_CSS)
+
     _render_action_bar(biz)
     _render_action_row(biz)
 
@@ -1912,7 +1934,7 @@ def _render_action_bar(biz: dict) -> None:
         '</div>'
         '</div>'
     )
-    st.markdown(html, unsafe_allow_html=True)
+    _emit_html(html)
 
 
 def _render_action_row(biz: dict) -> None:
@@ -2192,7 +2214,7 @@ def _render_sidebar_identity(biz: dict) -> None:
         + ai_footer +
         '</div></div>'
     )
-    st.markdown(full_card, unsafe_allow_html=True)
+    _emit_html(full_card)
 
     # Bouton "Lancer l'audit SEO" en widget Streamlit natif (interactif)
     # Scopé via st.container key → règle CSS .st-key-bd-audit-cta s'applique
@@ -2247,7 +2269,7 @@ def _render_sidebar_dirigeants(biz: dict) -> None:
         + "".join(rows) +
         '</div></div>'
     )
-    st.markdown(html, unsafe_allow_html=True)
+    _emit_html(html)
 
 
 # ===========================================================================
@@ -2385,11 +2407,10 @@ def _render_eval_panel(biz: dict) -> None:
         '</div></div>'
     )
 
-    st.markdown(
+    _emit_html(
         '<div class="bd-root"><div class="bd-eval-grid">'
         + fin_html + loc_html + signaux_html +
-        '</div></div>',
-        unsafe_allow_html=True,
+        '</div></div>'
     )
 
 
@@ -2408,15 +2429,14 @@ def _render_legal_panel(biz: dict) -> None:
         if biz.get("capital"):
             rows.append(("Capital", _safe_html(biz["capital"])))
         if rows:
-            st.markdown(
+            _emit_html(
                 '<div class="bd-root"><div class="bd-data-grid">'
                 + "".join(
                     f'<div class="bd-data-row"><span class="bd-data-label">{label}</span>'
                     f'<span class="bd-data-value">{value}</span></div>'
                     for label, value in rows
                 )
-                + '</div></div>',
-                unsafe_allow_html=True,
+                + '</div></div>'
             )
         else:
             st.caption("Aucune donnée légale disponible.")
@@ -2439,11 +2459,10 @@ def _render_legal_panel(biz: dict) -> None:
                     + (f'<span class="bd-nace-code">{_safe_html(code)}</span>' if code else "")
                     + f'<span>{_safe_html(label)}</span></div>'
                 )
-            st.markdown(
+            _emit_html(
                 '<div class="bd-root">'
                 + "".join(chips) +
-                '</div>',
-                unsafe_allow_html=True,
+                '</div>'
             )
         else:
             st.caption("Aucun code NACE renseigné.")
@@ -2468,7 +2487,7 @@ def _render_legal_panel(biz: dict) -> None:
                     '<div class="bd-ext-sub">companyweb.be</div></div></a>'
                 )
             html_parts.append('</div>')
-            st.markdown("".join(html_parts), unsafe_allow_html=True)
+            _emit_html("".join(html_parts))
 
 
 def _render_history_panel(biz: dict) -> None:
@@ -2480,15 +2499,14 @@ def _render_history_panel(biz: dict) -> None:
 
     if not has_history:
         name = _safe_html(biz.get("name") or "cette entreprise")
-        st.markdown(
+        _emit_html(
             '<div class="bd-root"><div class="bd-eval-card">'
             '<div class="bd-empty">'
             f'<div class="bd-empty-icon">{_ICON_PHONE_LARGE}</div>'
             '<div class="bd-empty-title">Aucun appel pour l\'instant</div>'
             f'<div class="bd-empty-text">L\'historique d\'appels, notes et rappels '
             f'apparaîtra ici dès le premier contact avec {name}.</div>'
-            '</div></div></div>',
-            unsafe_allow_html=True,
+            '</div></div></div>'
         )
         return
 
@@ -2645,17 +2663,13 @@ _init_state()
 # bouton « Détails » qui a été cliqué, et disparaît au prochain clic sur
 # une autre fiche.
 #
-# On utilise st.html() (et pas st.markdown) car le sanitizer de markdown
-# escape certaines balises (notamment <link>) et finit par afficher le
-# CSS en texte brut. st.html() injecte le HTML tel quel.
+# On utilise _emit_html (qui wrappe st.html avec fallback) car le sanitizer
+# de markdown escape certaines balises et peut afficher le CSS en texte brut.
+# st.html() injecte le HTML tel quel sans sanitization.
 #
 # Conséquence : les overrides Streamlit (tabs/expanders) s'appliquent
 # globalement à toute l'app, ce qui est volontaire (design system cohérent).
-try:
-    st.html(_BUSINESS_DETAIL_CSS)
-except AttributeError:
-    # Fallback pour Streamlit < 1.33 qui n'a pas encore st.html()
-    st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
+_emit_html(_BUSINESS_DETAIL_CSS)
 
 
 # ===========================================================================
