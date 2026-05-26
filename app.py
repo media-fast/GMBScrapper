@@ -1594,12 +1594,12 @@ def render_detail_page(biz: dict) -> None:
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    # Hauteur initiale 2400px (gros pour couvrir le pire cas). Le JS embarqué
-    # dans l'iframe (resizeFrameToContent) ajuste à la hauteur réelle du
-    # contenu via window.frameElement → fini le gros vide blanc en bas.
-    # La boucle infinie précédente venait de min-height:100vh sur body, qui
-    # est retiré → resize stable maintenant.
-    _components_html(visual_html, height=2400, scrolling=False)
+    # Hauteur initiale 2400px (large pour couvrir tous les cas). Le JS
+    # resizeFrameToContent l'ajuste à la hauteur réelle (mesurée via
+    # Math.max(body.scrollHeight, getBoundingClientRect, shell.bottom)).
+    # scrolling=True en filet de sécurité : si le JS sous-estime, l'user
+    # peut scroller dans l'iframe pour voir tout le contenu.
+    _components_html(visual_html, height=2400, scrolling=True)
 
 
 # ===========================================================================
@@ -2545,15 +2545,23 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   let lastAppliedHeight = 0;
   function resizeFrameToContent() {{
     try {{
-      // BUG FIX MAJEUR : on utilisait Math.max(body.scrollHeight,
-      // documentElement.scrollHeight) — mais documentElement.scrollHeight
-      // retourne la hauteur du VIEWPORT (= hauteur initiale de l'iframe
-      // = 2400px) quand le contenu ne déborde pas. Conséquence :
-      // Math.max(1000, 2400) = 2400 → iframe restait coincé à 2400px.
-      // Fix : utiliser body.scrollHeight (taille réelle du contenu).
-      // Aussi : on prend getBoundingClientRect().height pour précision.
-      const h = Math.ceil(document.body.getBoundingClientRect().height);
-      const clamped = Math.min(Math.max(h + 8, 50), 3000);
+      // Mesure GÉNÉREUSE de la hauteur du contenu — on prend le MAX de
+      // plusieurs sources pour ne JAMAIS sous-estimer (sinon contenu cut off
+      // en bas, ce que l'utilisateur a remonté).
+      //
+      // ⚠ On évite documentElement.scrollHeight (retourne la hauteur du
+      // VIEWPORT = 2400px initial) — c'était le vrai bug précédent.
+      //
+      // Sources de mesure :
+      //  1. body.scrollHeight = tout le contenu scrollable du body
+      //  2. body.getBoundingClientRect().height = box rendue du body
+      //  3. .shell bottom = bas du conteneur principal (sécurité)
+      const scrollH = document.body.scrollHeight;
+      const boundH = Math.ceil(document.body.getBoundingClientRect().height);
+      const shell = document.querySelector('.shell');
+      const shellBottom = shell ? Math.ceil(shell.getBoundingClientRect().bottom) : 0;
+      const h = Math.max(scrollH, boundH, shellBottom);
+      const clamped = Math.min(Math.max(h + 32, 50), 4000);
       if (Math.abs(clamped - lastAppliedHeight) < 2) return;
       lastAppliedHeight = clamped;
 
