@@ -1409,6 +1409,9 @@ def show_business_details(biz: dict) -> None:
 # ===========================================================================
 
 _BUSINESS_DETAIL_CSS = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 .bd-root {
   --bd-indigo-900: #1A0E5C;
@@ -1430,7 +1433,12 @@ _BUSINESS_DETAIL_CSS = """
   --bd-green-50:   #E6F7EE;
   --bd-amber-50:   #FFF6E5;
   --bd-amber-700:  #B5740A;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--bd-ink-900);
+  font-size: 14px;
 }
+.bd-root .bd-serif { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; }
+.bd-root .bd-mono  { font-family: 'JetBrains Mono', monospace; }
 
 /* ========== ACTION BAR ========== */
 .bd-action-bar {
@@ -1514,9 +1522,9 @@ _BUSINESS_DETAIL_CSS = """
   letter-spacing: 0.02em; margin-bottom: 14px;
 }
 .bd-company-name {
-  font-size: 28px; font-weight: 600; letter-spacing: -0.025em;
-  line-height: 1.15; color: var(--bd-ink-900); margin-bottom: 6px;
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+  font-size: 30px; font-weight: 600; letter-spacing: -0.025em;
+  line-height: 1.1; color: var(--bd-ink-900); margin-bottom: 6px;
 }
 .bd-company-form {
   font-size: 13px; color: var(--bd-ink-500); margin-bottom: 18px;
@@ -1537,7 +1545,7 @@ _BUSINESS_DETAIL_CSS = """
   margin-bottom: 6px; opacity: .8;
 }
 .bd-score-value {
-  font-family: Georgia, serif; font-size: 26px; font-weight: 600;
+  font-family: 'Fraunces', Georgia, serif; font-size: 26px; font-weight: 600;
   color: var(--bd-indigo-900); letter-spacing: -0.02em;
   display: flex; align-items: baseline; justify-content: center; gap: 3px;
 }
@@ -1620,7 +1628,7 @@ _BUSINESS_DETAIL_CSS = """
   background: linear-gradient(135deg, var(--bd-indigo-600), var(--bd-indigo-500));
   color: white;
   display: grid; place-items: center;
-  font-family: Georgia, serif; font-size: 14px; font-weight: 600;
+  font-family: 'Fraunces', Georgia, serif; font-size: 14px; font-weight: 600;
   flex-shrink: 0;
 }
 .bd-admin-name { font-size: 13.5px; font-weight: 600; color: var(--bd-ink-900); margin-bottom: 1px; }
@@ -1723,21 +1731,144 @@ _BUSINESS_DETAIL_CSS = """
   background: var(--bd-indigo-50); color: var(--bd-indigo-700);
   border-radius: 18px; display: grid; place-items: center;
 }
+.bd-empty-icon svg { width: 26px; height: 26px; }
 .bd-empty-title {
-  font-family: Georgia, serif; font-size: 18px;
+  font-family: 'Fraunces', Georgia, serif; font-size: 18px;
   color: var(--bd-ink-900); margin-bottom: 6px;
 }
-.bd-empty-text { font-size: 13px; max-width: 360px; margin: 0 auto; }
+.bd-empty-text { font-size: 13px; max-width: 360px; margin: 0 auto 20px; }
+
+/* ========== OVERRIDES STREAMLIT NATIFS ========== */
+/* Appliqués globalement : la maquette « Oui Allo » devient le design system
+ * de tous les tabs et expanders de l'app (cohérent, ils en gagnent en classe).
+ * Pas de side-effect indésirable — les tabs natifs étaient ternes par défaut.
+ */
+
+/* Tabs : pill design (fond paper, items pill indigo-900 actif) */
+[data-baseweb="tab-list"] {
+  background: var(--bd-paper, #fff) !important;
+  padding: 6px !important;
+  border: 1px solid var(--bd-ink-100, #EFEDF7) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 1px 2px rgba(26, 14, 92, 0.04) !important;
+  gap: 4px !important;
+  width: fit-content !important;
+}
+[data-baseweb="tab-list"] [data-baseweb="tab-border"] { display: none !important; }
+[data-baseweb="tab-list"] [data-baseweb="tab-highlight"] { display: none !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"] {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 9px !important;
+  padding: 9px 18px !important;
+  font-family: 'Inter', system-ui, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: var(--bd-ink-500, #6B6890) !important;
+  transition: all .2s !important;
+  margin: 0 !important;
+  height: auto !important;
+}
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover {
+  color: var(--bd-ink-900, #0E0B2E) !important;
+}
+[data-baseweb="tab-list"] button[data-baseweb="tab"][aria-selected="true"] {
+  background: var(--bd-indigo-900, #1A0E5C) !important;
+  color: white !important;
+}
+
+/* Expanders : carte arrondie, header padding confortable, chevron indigo */
+[data-testid="stExpander"] {
+  background: var(--bd-paper, #fff) !important;
+  border-radius: 16px !important;
+  border: 1px solid var(--bd-ink-100, #EFEDF7) !important;
+  box-shadow: 0 1px 2px rgba(26, 14, 92, 0.04) !important;
+  overflow: hidden !important;
+  margin-bottom: 14px !important;
+}
+[data-testid="stExpander"] details > summary {
+  padding: 16px 22px !important;
+  font-family: 'Inter', system-ui, sans-serif !important;
+  background: transparent !important;
+  transition: background .15s !important;
+}
+[data-testid="stExpander"] details > summary p,
+[data-testid="stExpander"] details > summary span {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: var(--bd-ink-900, #0E0B2E) !important;
+}
+[data-testid="stExpander"] details > summary:hover {
+  background: var(--bd-cream, #FBF9F4) !important;
+}
+[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"] {
+  color: var(--bd-indigo-700, #3425AF) !important;
+}
+[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+  padding: 16px 22px 22px !important;
+  border-top: 1px dashed var(--bd-ink-200, #E3E1F0) !important;
+}
+
+/* CTA Audit SEO : bouton indigo-900 (scopé via st.container key="bd-audit-cta") */
+.st-key-bd-audit-cta [data-testid="stButton"] > button,
+[data-testid="stContainer"][class*="bd-audit-cta"] [data-testid="stButton"] > button {
+  background: var(--bd-indigo-900, #1A0E5C) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 9px !important;
+  font-family: 'Inter', system-ui, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 10px 14px !important;
+  width: 100% !important;
+  transition: all .2s !important;
+}
+.st-key-bd-audit-cta [data-testid="stButton"] > button:hover,
+[data-testid="stContainer"][class*="bd-audit-cta"] [data-testid="stButton"] > button:hover {
+  background: var(--bd-indigo-700, #3425AF) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 14px rgba(52, 37, 175, 0.25) !important;
+}
+
+/* CTA Appeler : bouton vert (scopé via st.container key="bd-call-cta") */
+.st-key-bd-call-cta [data-testid="stButton"] > button {
+  background: var(--bd-green-600, #0F9D58) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-family: 'Inter', system-ui, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 10px 18px !important;
+  transition: all .2s !important;
+}
+.st-key-bd-call-cta [data-testid="stButton"] > button:hover {
+  background: #0a8049 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 20px rgba(15, 157, 88, 0.3) !important;
+}
+.st-key-bd-call-cta [data-testid="stButton"] > button:disabled {
+  background: var(--bd-ink-200, #E3E1F0) !important;
+  color: var(--bd-ink-500, #6B6890) !important;
+  transform: none !important;
+  box-shadow: none !important;
+  cursor: not-allowed !important;
+}
 </style>
 """
 
 
 def _inject_business_detail_styles() -> None:
-    """Injecte le CSS premium UNE FOIS par session Streamlit."""
-    if st.session_state.get("_bd_css_injected"):
-        return
+    """Injecte le CSS premium à CHAQUE rerun.
+
+    Bug évité : si on cache via st.session_state, l'élément <style> du
+    run précédent est retiré du DOM par Streamlit (les widgets non-re-rendus
+    sont nettoyés). Au 2e clic « Détails » sur une autre fiche, le HTML
+    s'afficherait sans aucun style. Re-injecter à chaque rerun est sans
+    impact perf (~6 Ko gzippés) et garantit que les styles sont toujours
+    présents tant qu'on regarde une fiche détail.
+    """
     st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
-    st.session_state["_bd_css_injected"] = True
 
 
 # ===========================================================================
@@ -1794,19 +1925,20 @@ def _render_action_row(biz: dict) -> None:
 
     a1, a2, _ = st.columns([2, 3, 7])
     with a1:
-        disabled = not phone or not is_configured()
-        if st.button(
-            "📞 Appeler maintenant",
-            key=f"bd_call_{safe_key}",
-            type="primary",
-            width="stretch",
-            disabled=disabled,
-            help=("Click-to-call Ringover" if not disabled else
-                  ("Pas de numéro" if not phone else "RINGOVER_API_KEY manquante")),
-        ):
-            res = click_to_call(phone)
-            st.toast(res['message'],
-                     icon=":material/call_made:" if res["ok"] else ":material/error:")
+        # Scoped container → la règle CSS .st-key-bd-call-cta s'applique
+        with st.container(key="bd-call-cta"):
+            disabled = not phone or not is_configured()
+            if st.button(
+                "Appeler maintenant",
+                key=f"bd_call_{safe_key}",
+                width="stretch",
+                disabled=disabled,
+                help=("Click-to-call Ringover" if not disabled else
+                      ("Pas de numéro" if not phone else "RINGOVER_API_KEY manquante")),
+            ):
+                res = click_to_call(phone)
+                st.toast(res['message'],
+                         icon=":material/call_made:" if res["ok"] else ":material/error:")
     with a2:
         status_key = f"bd_status_{safe_key}"
         if status_key not in st.session_state:
@@ -1857,6 +1989,51 @@ _ICON_PIN = (
     '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>'
     '<circle cx="12" cy="10" r="3"/></svg>'
 )
+_ICON_TROPHY = (  # rank badge "Prospect N°X"
+    '<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">'
+    '<path d="M6 9H4.5a2.5 2.5 0 010-5H6m12 5h1.5a2.5 2.5 0 000-5H18m-12 '
+    '0v9a6 6 0 0012 0V4M8 22h8m-4-4v4" stroke="currentColor" stroke-width="2" '
+    'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+_ICON_USERS = (  # dirigeants
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" width="14" height="14">'
+    '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>'
+    '<circle cx="9" cy="7" r="4"/>'
+    '<path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>'
+)
+_ICON_TRENDING_UP = (  # santé financière
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" width="16" height="16">'
+    '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>'
+    '<polyline points="17 6 23 6 23 12"/></svg>'
+)
+_ICON_MAP_PIN_LARGE = (  # présence locale
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" width="16" height="16">'
+    '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>'
+    '<circle cx="12" cy="10" r="3"/></svg>'
+)
+_ICON_CHECK_BOX = (  # signaux qualifiants
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" width="16" height="16">'
+    '<polyline points="9 11 12 14 22 4"/>'
+    '<path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>'
+)
+_ICON_PHONE_LARGE = (  # empty state historique (64px)
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" width="26" height="26">'
+    '<path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 '
+    '19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 '
+    '012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 '
+    '006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>'
+    '</svg>'
+)
+_ICON_STAR = (  # rank badge
+    '<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">'
+    '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 '
+    '5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
+)
 
 
 def _render_sidebar_identity(biz: dict) -> None:
@@ -1889,7 +2066,7 @@ def _render_sidebar_identity(biz: dict) -> None:
     if rank:
         suffix = "er" if rank == 1 else "e"
         rank_html = (
-            f'<div class="bd-rank-badge">★ Prospect N°{rank}{suffix}</div>'
+            f'<div class="bd-rank-badge">{_ICON_STAR}Prospect N°{rank}{suffix}</div>'
         )
 
     # Score panel
@@ -2020,14 +2197,16 @@ def _render_sidebar_identity(biz: dict) -> None:
     st.markdown(full_card, unsafe_allow_html=True)
 
     # Bouton "Lancer l'audit SEO" en widget Streamlit natif (interactif)
+    # Scopé via st.container key → règle CSS .st-key-bd-audit-cta s'applique
     if website:
         safe_key = (biz.get("dedup_key") or "_no").replace(":", "_").replace("|", "_")
-        if st.button(
-            "🔍 Lancer l'audit SEO du site",
-            key=f"bd_audit_{safe_key}",
-            width="stretch",
-        ):
-            st.session_state[f"bd_audit_open_{safe_key}"] = True
+        with st.container(key="bd-audit-cta"):
+            if st.button(
+                "Lancer l'audit SEO du site",
+                key=f"bd_audit_{safe_key}",
+                width="stretch",
+            ):
+                st.session_state[f"bd_audit_open_{safe_key}"] = True
 
         if st.session_state.get(f"bd_audit_open_{safe_key}"):
             with st.expander("Résultats audit SEO", expanded=True):
@@ -2066,7 +2245,7 @@ def _render_sidebar_dirigeants(biz: dict) -> None:
     html = (
         '<div class="bd-root">'
         '<div class="bd-card bd-admins">'
-        '<div class="bd-admins-title">👥 Dirigeants</div>'
+        f'<div class="bd-admins-title">{_ICON_USERS}<span>Dirigeants</span></div>'
         + "".join(rows) +
         '</div></div>'
     )
@@ -2102,7 +2281,7 @@ def _render_eval_panel(biz: dict) -> None:
     fin_html = (
         '<div class="bd-eval-card">'
         '<div class="bd-eval-head">'
-        '<div class="bd-eval-icon" style="background:#E6F7EE;color:#0F9D58;">📈</div>'
+        f'<div class="bd-eval-icon" style="background:#E6F7EE;color:#0F9D58;">{_ICON_TRENDING_UP}</div>'
         '<div><div class="bd-eval-title">Santé financière</div>'
         '<div class="bd-eval-sub">Sources officielles BNB</div></div>'
         '</div>'
@@ -2146,7 +2325,7 @@ def _render_eval_panel(biz: dict) -> None:
     loc_html = (
         '<div class="bd-eval-card">'
         '<div class="bd-eval-head">'
-        '<div class="bd-eval-icon" style="background:#FFF6E5;color:#B5740A;">📍</div>'
+        f'<div class="bd-eval-icon" style="background:#FFF6E5;color:#B5740A;">{_ICON_MAP_PIN_LARGE}</div>'
         '<div><div class="bd-eval-title">Présence locale</div>'
         '<div class="bd-eval-sub">Localisation & catégorie</div></div>'
         '</div>'
@@ -2195,7 +2374,7 @@ def _render_eval_panel(biz: dict) -> None:
     signaux_html = (
         '<div class="bd-eval-card bd-eval-card--full">'
         '<div class="bd-eval-head">'
-        '<div class="bd-eval-icon" style="background:#F5F4FF;color:#3425AF;">✓</div>'
+        f'<div class="bd-eval-icon" style="background:#F5F4FF;color:#3425AF;">{_ICON_CHECK_BOX}</div>'
         '<div><div class="bd-eval-title">Signaux qualifiants</div>'
         '<div class="bd-eval-sub">Pourquoi ce prospect mérite votre attention</div></div>'
         '</div>'
@@ -2306,7 +2485,7 @@ def _render_history_panel(biz: dict) -> None:
         st.markdown(
             '<div class="bd-root"><div class="bd-eval-card">'
             '<div class="bd-empty">'
-            '<div class="bd-empty-icon">📞</div>'
+            f'<div class="bd-empty-icon">{_ICON_PHONE_LARGE}</div>'
             '<div class="bd-empty-title">Aucun appel pour l\'instant</div>'
             f'<div class="bd-empty-text">L\'historique d\'appels, notes et rappels '
             f'apparaîtra ici dès le premier contact avec {name}.</div>'
