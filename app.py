@@ -1434,23 +1434,37 @@ def _render_audit_seo_block(biz: dict, safe_key: str) -> None:
         )
 
 
-@st.dialog("Détails de l'entreprise", width="large")
-def show_business_details(biz: dict) -> None:
-    """Vue détaillée premium d'une fiche prospect (design Oui Allo).
+def open_business_detail(biz: dict) -> None:
+    """Navigue vers la page détail via URL query params (au lieu d'un popup).
 
-    ARCHITECTURE NOUVELLE — RENDU EN IFRAME :
-    Après plusieurs tentatives infructueuses d'injecter le CSS dans le
-    portal @st.dialog (Streamlit/BaseWeb a des styles avec une spécificité
-    trop élevée qui écrasaient même mes !important), on bascule sur
-    `st.components.v1.html()` qui rend le HTML dans un iframe isolé.
-    L'iframe = document totalement séparé → aucune interférence Streamlit,
-    le design matche pixel-perfect la maquette fiche-entreprise.html.
+    Set `?prospect=<dedup_key>` dans l'URL. La détection est faite au
+    top-level via `_check_detail_route()` qui appelle `render_detail_page()`
+    si le param est présent (et skip le reste du main app).
 
-    Trade-off : les boutons interactifs (Appeler, changer Statut, lancer
-    l'audit SEO) doivent rester en widgets Streamlit natifs AU-DESSUS de
-    l'iframe (un clic dans un iframe ne peut pas appeler du code Python).
-    Les interactions internes à la fiche (changer d'onglet, ouvrir un
-    accordéon) sont gérées par vanilla JS embarqué dans l'iframe.
+    Avantages vs popup @st.dialog :
+      - Pas de portal modal qui isole les styles CSS
+      - URL bookmarkable / partageable
+      - Browser back/forward fonctionne
+      - Pas de problème de hauteur de modal
+      - Scroll naturel de la page (l'iframe peut être plus grand sans
+        contraintes)
+    """
+    dedup = biz.get("dedup_key")
+    if dedup:
+        st.query_params["prospect"] = dedup
+        st.rerun()
+
+
+def render_detail_page(biz: dict) -> None:
+    """Vue détaillée premium d'une fiche prospect — rendue en PAGE COMPLÈTE
+    (et non en popup @st.dialog).
+
+    Layout :
+      - Bouton « ← Retour aux résultats » en haut
+      - Action row Streamlit native (Appeler + Statut)
+      - Iframe avec la maquette HTML pixel-perfect (hauteur fixe + scroll
+        si nécessaire — pas de auto-resize JS pour éviter les boucles)
+      - Bouton audit SEO caché (déclenché par JS depuis l'iframe)
     """
     from streamlit.components.v1 import html as _components_html
 
@@ -1459,11 +1473,25 @@ def show_business_details(biz: dict) -> None:
     status = biz.get("call_status") or "À appeler"
     website = biz.get("website")
 
+    # ─────────────── Bouton « ← Retour aux résultats » ───────────────────
+    back_col, _ = st.columns([2, 8])
+    with back_col:
+        if st.button(
+            ":material/arrow_back: Retour aux résultats",
+            key=f"bd_back_{safe_key}",
+            width="stretch",
+        ):
+            # Clear query params + rerun pour revenir à la page principale
+            try:
+                del st.query_params["prospect"]
+            except KeyError:
+                pass
+            st.rerun()
+
     # ─────────────── CSS hide pour le bouton Streamlit caché ─────────────
-    # Le CSS au niveau page ne cascade pas toujours dans le portal du
-    # @st.dialog → on ré-injecte ici pour s'assurer que le container
-    # `.st-key-bd-hidden-audit-run` (qui contient le bouton trigger
-    # déclenché par JS depuis l'iframe) est invisible.
+    # Le container `.st-key-bd-hidden-audit-run` contient le bouton trigger
+    # déclenché par JS depuis l'iframe — doit rester invisible mais cliquable
+    # programmatiquement.
     try:
         st.html("""
 <style>
@@ -1561,11 +1589,10 @@ def show_business_details(biz: dict) -> None:
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    # Hauteur initiale = 800px (taille moyenne d'une fiche). Le JS embarqué
-    # dans l'iframe va l'ajuster dynamiquement via window.frameElement à la
-    # hauteur réelle du contenu, après chargement + sur chaque ResizeObserver
-    # event (tab switch, accordion toggle, loader audit, etc.).
-    _components_html(visual_html, height=800, scrolling=False)
+    # Hauteur fixe généreuse 2400px + scrolling=True. On laisse l'utilisateur
+    # scroller dans l'iframe si besoin. L'approche auto-resize JS causait
+    # une boucle infinie (24000px+), c'est plus simple et fiable comme ça.
+    _components_html(visual_html, height=2400, scrolling=True)
 
 
 # ===========================================================================
@@ -2500,51 +2527,10 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   // Expose globalement pour que onclick="launchAuditWithLoader(this)" marche
   window.launchAuditWithLoader = launchAuditWithLoader;
 
-  // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
-  // L'iframe Streamlit a un height fixe → on l'ajuste au contenu réel.
-  // window.frameElement marche car l'iframe est same-origin (sandbox include
-  // allow-same-origin).
-  //
-  // GARDE-FOU CONTRE BOUCLE INFINIE : avant on avait min-height:100vh sur
-  // body qui causait : iframe grandit → 100vh grandit → body grandit →
-  // ResizeObserver tire → iframe grandit encore (loop, finissait à 24000px+).
-  // Maintenant body n'a plus min-height, mais on garde un dampener qui
-  // ignore les redimensions < 2px (bruit) et plafonne à 3000px (sécurité).
-  let lastAppliedHeight = 0;
-  function resizeFrameToContent() {{
-    try {{
-      const frame = window.frameElement;
-      if (!frame) return;
-      // Mesure stable : prendre le max de scrollHeight (body + doc element)
-      const h = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight
-      );
-      // Plafond de sécurité au cas où quelque chose merderait
-      const clamped = Math.min(h + 8, 3000);
-      // Ignore changements < 2px (bruit de mesure, évite la boucle)
-      if (Math.abs(clamped - lastAppliedHeight) < 2) return;
-      lastAppliedHeight = clamped;
-      frame.style.height = clamped + 'px';
-    }} catch (e) {{
-      console.error('resizeFrameToContent failed:', e);
-    }}
-  }}
-
-  // Initial resize après chargement complet (fonts, images)
-  if (document.readyState === 'complete') {{
-    resizeFrameToContent();
-  }} else {{
-    window.addEventListener('load', resizeFrameToContent);
-  }}
-  // Re-resize dynamique : tab switch, accordion toggle, loader audit, etc.
-  // (Le guard < 2px coupe la boucle.)
-  if (typeof ResizeObserver !== 'undefined') {{
-    new ResizeObserver(resizeFrameToContent).observe(document.body);
-  }}
-  // Délai de sécurité au cas où Google Fonts arrivent en retard
-  setTimeout(resizeFrameToContent, 300);
-  setTimeout(resizeFrameToContent, 800);
+  // NB : auto-resize de l'iframe RETIRÉ. L'iframe a maintenant une
+  // hauteur fixe (2400px) + scrolling=True côté Streamlit. C'est plus
+  // simple et fiable que les tentatives précédentes (ResizeObserver
+  // créait une boucle infinie qui poussait l'iframe à 24000px+).
 </script>
 
 </body>
@@ -3735,7 +3721,8 @@ def render_business_card(biz: dict, key_suffix: str = "") -> None:
                     st.toast(res['message'], icon=":material/error:")
         with b2:
             if st.button("Détails", key=f"det_{safe_key}", width="stretch"):
-                show_business_details(biz)
+                # Navigation via URL au lieu d'un popup (set query param + rerun)
+                open_business_detail(biz)
 
         # Changement de statut (selectbox)
         status_key = f"st_{safe_key}"
@@ -3805,6 +3792,44 @@ _init_state()
 # Conséquence : les overrides Streamlit (tabs/expanders) s'appliquent
 # globalement à toute l'app, ce qui est volontaire (design system cohérent).
 _emit_html(_BUSINESS_DETAIL_CSS)
+
+
+# ===========================================================================
+# ROUTING URL : page détail prospect (?prospect=<dedup_key>)
+# ===========================================================================
+# Si l'URL contient `?prospect=<dedup_key>`, on cherche la fiche dans la DB
+# et on rend la page détail dédiée (PAGE COMPLÈTE, pas un popup) puis on
+# st.stop() pour ne pas afficher le reste du main app (form + tabs).
+#
+# Avantages vs @st.dialog :
+#   - Pas de portal modal qui isole les styles CSS
+#   - URL bookmarkable / partageable
+#   - Browser back/forward fonctionne
+#   - Iframe à hauteur fixe sans contraintes de modal
+_prospect_key = st.query_params.get("prospect")
+if _prospect_key:
+    # Cherche la fiche dans la DB via dedup_key
+    from storage.history import get_known_businesses as _get_all
+    _all_biz = _get_all(limit=50000)
+    _biz_match = next(
+        (b for b in _all_biz if b.get("dedup_key") == _prospect_key),
+        None,
+    )
+    if _biz_match:
+        render_detail_page(_biz_match)
+        st.stop()  # ← stop ici, pas de main app derrière
+    else:
+        st.error(
+            f"Prospect introuvable (dedup_key={_prospect_key[:60]}…). "
+            "La fiche a peut-être été supprimée de l'historique."
+        )
+        if st.button(":material/arrow_back: Retour aux résultats"):
+            try:
+                del st.query_params["prospect"]
+            except KeyError:
+                pass
+            st.rerun()
+        st.stop()
 
 
 # ===========================================================================
@@ -4956,7 +4981,7 @@ with tab_results:
                                          key=f"info_row_{chosen_id}_{idx}",
                                          help="Voir les détails",
                                          width="stretch"):
-                                show_business_details(b)
+                                open_business_detail(b)
                         st.markdown(
                             '<div style="border-bottom:1px solid var(--line);'
                             'margin-top:6px;"></div>',
