@@ -1392,40 +1392,833 @@ def _render_seo_audit_section(biz: dict) -> None:
 def show_business_details(biz: dict) -> None:
     """Vue détaillée premium d'une fiche prospect (design Oui Allo).
 
-    Layout :
-      - Action bar sticky avec breadcrumb + tracking strip (statut/appel/rappel)
-        + boutons Appeler/Plus
-      - Shell 2 colonnes : sidebar 380px (identity + score + contact + dirigeants)
-        + main avec 3 tabs (Évaluation / Identité légale / Historique)
+    ARCHITECTURE NOUVELLE — RENDU EN IFRAME :
+    Après plusieurs tentatives infructueuses d'injecter le CSS dans le
+    portal @st.dialog (Streamlit/BaseWeb a des styles avec une spécificité
+    trop élevée qui écrasaient même mes !important), on bascule sur
+    `st.components.v1.html()` qui rend le HTML dans un iframe isolé.
+    L'iframe = document totalement séparé → aucune interférence Streamlit,
+    le design matche pixel-perfect la maquette fiche-entreprise.html.
+
+    Trade-off : les boutons interactifs (Appeler, changer Statut, lancer
+    l'audit SEO) doivent rester en widgets Streamlit natifs AU-DESSUS de
+    l'iframe (un clic dans un iframe ne peut pas appeler du code Python).
+    Les interactions internes à la fiche (changer d'onglet, ouvrir un
+    accordéon) sont gérées par vanilla JS embarqué dans l'iframe.
     """
-    # ⚠ CSS RÉ-INJECTÉ DANS LE DIALOG : `@st.dialog` rend son contenu dans
-    # un portal BaseWeb séparé du DOM principal. La CSS injectée au niveau
-    # page ne cascade pas toujours vers ce portal (selon les versions
-    # Streamlit). Pour être SÛR que les styles s'appliquent, on ré-injecte
-    # le CSS à l'intérieur du dialog : ainsi le <style> est un enfant
-    # direct du portal et applique forcément. _emit_html utilise st.html
-    # (sans sanitization) pour ne pas perdre les balises <style>.
-    _emit_html(_BUSINESS_DETAIL_CSS)
+    from streamlit.components.v1 import html as _components_html
 
-    _render_action_bar(biz)
-    _render_action_row(biz)
+    safe_key = (biz.get("dedup_key") or "_no").replace(":", "_").replace("|", "_")
+    phone = biz.get("phone")
+    status = biz.get("call_status") or "À appeler"
+    website = biz.get("website")
 
-    # Le shell 2-col est rendu via st.columns avec ratio approximant 380:760
-    # (Streamlit normalise sur 12 unités, on prend 4:8 ≈ 33:67).
-    side_col, main_col = st.columns([4, 8], gap="medium")
-    with side_col:
-        _render_sidebar_identity(biz)
-        _render_sidebar_dirigeants(biz)
-    with main_col:
-        tab_eval, tab_legal, tab_hist = st.tabs(
-            ["Évaluation", "Identité légale", "Historique"]
+    # ─────────────── ACTION ROW NATIVE (au-dessus de l'iframe) ───────────────
+    # Trois actions principales : Appeler / Changer statut / Lancer audit SEO
+    a1, a2, a3 = st.columns([2, 2, 2])
+    with a1:
+        disabled = not phone or not is_configured()
+        if st.button(
+            ":material/call: Appeler maintenant",
+            key=f"bd_call_{safe_key}", type="primary", width="stretch",
+            disabled=disabled,
+            help=("Click-to-call Ringover" if not disabled else
+                  ("Pas de numéro" if not phone else "RINGOVER_API_KEY manquante")),
+        ):
+            res = click_to_call(phone)
+            st.toast(res['message'],
+                     icon=":material/call_made:" if res["ok"] else ":material/error:")
+
+    with a2:
+        status_key = f"bd_status_{safe_key}"
+        if status_key not in st.session_state:
+            st.session_state[status_key] = status
+
+        def _on_status_change(_k=status_key, _d=biz.get("dedup_key")):
+            new_val = st.session_state[_k]
+            if _d and not _d.startswith("_no_"):
+                update_call_fields(_d, call_status=new_val)
+                st.toast(f"Statut : {new_val}", icon=":material/save:")
+
+        st.selectbox(
+            "Statut",
+            CALL_STATUSES,
+            index=CALL_STATUSES.index(status) if status in CALL_STATUSES else 0,
+            key=status_key,
+            on_change=_on_status_change,
+            label_visibility="collapsed",
         )
-        with tab_eval:
-            _render_eval_panel(biz)
-        with tab_legal:
-            _render_legal_panel(biz)
-        with tab_hist:
-            _render_history_panel(biz)
+
+    with a3:
+        if website:
+            if st.button(
+                ":material/search: Lancer l'audit SEO",
+                key=f"bd_audit_{safe_key}", width="stretch",
+            ):
+                st.session_state[f"bd_audit_open_{safe_key}"] = True
+
+    # ─────────────── BRIEFING IA (Streamlit natif, génération côté serveur) ───
+    _render_ai_briefing_section(biz)
+
+    # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
+    visual_html = _build_detail_visual_html(biz)
+    # Hauteur fixée : l'iframe ne peut pas auto-fit son contenu. 1500px
+    # couvre toutes les fiches (action bar + score + contact + dirigeants
+    # + 3 onglets full content). scrolling=True au cas où.
+    _components_html(visual_html, height=1500, scrolling=True)
+
+    # ─────────────── RÉSULTATS AUDIT SEO (Streamlit natif, après l'iframe) ───
+    if st.session_state.get(f"bd_audit_open_{safe_key}"):
+        with st.expander("Résultats audit SEO", expanded=True):
+            _render_seo_audit_section(biz)
+
+
+# ===========================================================================
+# BUILDER DU HTML IFRAME — fiche détail visuelle pixel-perfect
+# ===========================================================================
+# Génère un document HTML standalone qui réplique exactement la maquette
+# fiche-entreprise.html, avec les données de l'entreprise substituées.
+# Rendu via st.components.v1.html() dans un iframe isolé → zéro interférence
+# avec le CSS de Streamlit/BaseWeb.
+
+def _build_detail_visual_html(biz: dict) -> str:
+    """Construit le document HTML complet pour l'iframe de fiche détail."""
+    import re as _re
+    from datetime import datetime as _dt
+
+    # ─── Données de base ───
+    name = _safe_html(biz.get("name") or "—")
+    rank = biz.get("google_rank")
+    status = biz.get("call_status") or "À appeler"
+    legal_form = _safe_html(biz.get("legal_form") or "")
+    category = _safe_html(biz.get("category") or "")
+    city = _safe_html(biz.get("city") or biz.get("locality") or "")
+    rating = biz.get("rating")
+    reviews_count = biz.get("reviews_count") or 0
+    phone = biz.get("phone") or ""
+    email = biz.get("email") or ""
+    website = biz.get("website") or ""
+    address = biz.get("address") or ""
+    postal = biz.get("postal_code") or ""
+    locality = biz.get("locality") or biz.get("city") or ""
+
+    # Ancienneté calculée
+    cd = biz.get("creation_date") or ""
+    age = None
+    year_created = None
+    m = _re.search(r"(\d{4})", str(cd))
+    if m:
+        year_created = int(m.group(1))
+        age = max(0, _dt.now().year - year_created)
+
+    # AI provider label
+    try:
+        ai_label = ai_provider_label()
+    except Exception:
+        ai_label = "non configuré"
+
+    # ─── Subtitle ───
+    sub_parts = [s for s in [legal_form, category, f"{city}, BE" if city else ""] if s]
+    subtitle = " · ".join(sub_parts)
+
+    # ─── Pulse dot couleur selon statut ───
+    pulse_color = "var(--red-600)" if status == "À rappeler" else "var(--amber-700)"
+
+    # ─── Rank badge ───
+    rank_html = ""
+    if rank:
+        suffix = "er" if rank == 1 else "e"
+        rank_html = f'''
+        <div class="rank-badge">
+          <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Prospect N°{rank}{suffix}
+        </div>'''
+
+    # ─── Score panel ───
+    score_html = ""
+    if rating or age is not None:
+        rating_block = ""
+        if rating:
+            try:
+                rint = int(round(float(rating)))
+                stars = "★" * rint + "☆" * (5 - rint)
+            except (ValueError, TypeError):
+                stars = ""
+            rating_block = f'''
+            <div class="score-block">
+              <div class="score-block__label">Réputation Google</div>
+              <div class="score-block__value">{_safe_html(rating)} <small>/5</small></div>
+              <div class="stars">{stars}</div>
+              <div class="reviews-count">{reviews_count} avis</div>
+            </div>'''
+        age_block = ""
+        if age is not None:
+            age_block = f'''
+            <div class="score-block">
+              <div class="score-block__label">Ancienneté</div>
+              <div class="score-block__value">{age} <small>ans</small></div>
+              <div class="reviews-count" style="margin-top: 16px;">depuis {year_created}</div>
+            </div>'''
+        if rating_block or age_block:
+            score_html = f'<div class="score-panel">{rating_block}{age_block}</div>'
+
+    # ─── Contact items ───
+    contact_items = []
+    if phone:
+        contact_items.append(f'''
+        <a href="tel:{_safe_html(phone)}" class="contact-item">
+          <span class="contact-item__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>
+            </svg>
+          </span>
+          <div class="contact-item__main">
+            <div class="contact-item__label">Téléphone</div>
+            <div class="contact-item__value">{_safe_html(phone)}</div>
+          </div>
+        </a>''')
+    if email:
+        contact_items.append(f'''
+        <a href="mailto:{_safe_html(email)}" class="contact-item">
+          <span class="contact-item__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+          </span>
+          <div class="contact-item__main">
+            <div class="contact-item__label">Email</div>
+            <div class="contact-item__value">{_safe_html(email)}</div>
+          </div>
+        </a>''')
+
+    website_block = ""
+    if website:
+        url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
+        website_block = f'''
+        <div class="website-block">
+          <a href="{_safe_html(website)}" target="_blank" class="website-block__main">
+            <span class="website-block__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+              </svg>
+            </span>
+            <div class="website-block__info">
+              <div class="website-block__label">Site web</div>
+              <div class="website-block__url">{_safe_html(url_display)}</div>
+            </div>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
+          </a>
+        </div>'''
+
+    address_block = ""
+    if address:
+        full_addr = _safe_html(address)
+        if postal and locality and postal not in str(address):
+            full_addr = f"{_safe_html(address)}, {_safe_html(postal)} {_safe_html(locality)}"
+        address_block = f'''
+        <a href="#" class="contact-item">
+          <span class="contact-item__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </span>
+          <div class="contact-item__main">
+            <div class="contact-item__label">Adresse</div>
+            <div class="contact-item__value">{full_addr}</div>
+          </div>
+        </a>'''
+
+    contact_list_html = (
+        '<div class="contact-list">'
+        + "".join(contact_items)
+        + website_block
+        + address_block
+        + '</div>'
+    )
+
+    # ─── Dirigeants ───
+    managers_str = (biz.get("managers") or "").strip()
+    dirigeants_html = ""
+    if managers_str:
+        names = [n.strip() for n in _re.split(r"[,;\n]+", managers_str) if n.strip()]
+        rows = []
+        for full_name in names[:8]:
+            parts = full_name.split()
+            if len(parts) >= 2:
+                initials = (parts[0][:1] + parts[-1][:1]).upper()
+            else:
+                initials = full_name[:2].upper()
+            rows.append(f'''
+            <div class="admin-row">
+              <div class="admin-avatar">{_safe_html(initials)}</div>
+              <div class="admin-info">
+                <div class="admin-name">{_safe_html(full_name)}</div>
+                <div class="admin-role">Administrateur</div>
+              </div>
+            </div>''')
+        dirigeants_html = f'''
+        <div class="card admins-card">
+          <div class="admins-card__title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+            Dirigeants
+          </div>
+          {"".join(rows)}
+        </div>'''
+
+    # ─── Eval panel : Santé financière + Présence locale + Signaux ───
+    BCE_STATUS = biz.get("bce_status") or "Actif"
+
+    fin_rows = []
+    if biz.get("establishments_count"):
+        fin_rows.append((
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>',
+            'Établissements actifs',
+            str(biz["establishments_count"]),
+        ))
+    if biz.get("creation_date"):
+        fin_rows.append((
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+            'Activité depuis',
+            _safe_html(biz["creation_date"]),
+        ))
+    fin_rows.append((
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+        'Statut BCE',
+        f'<span class="status-pill" style="background: var(--green-50); color: var(--green-600);">{_safe_html(BCE_STATUS)}</span>',
+    ))
+    if biz.get("nbb_revenue"):
+        fin_rows.append(('', "Chiffre d'affaires", _safe_html(biz["nbb_revenue"])))
+    if biz.get("nbb_equity"):
+        fin_rows.append(('', "Fonds propres", _safe_html(biz["nbb_equity"])))
+    if biz.get("nbb_employees"):
+        fin_rows.append(('', "Effectif", _safe_html(biz["nbb_employees"])))
+
+    fin_rows_html = "".join(
+        f'<div class="stat-row"><span class="stat-row__label">{icon}{label}</span><span class="stat-row__value">{value}</span></div>'
+        for icon, label, value in fin_rows
+    )
+
+    fin_links = []
+    if biz.get("nbb_url"):
+        fin_links.append(f'''
+        <a href="{_safe_html(biz["nbb_url"])}" target="_blank" class="ext-link">
+          <span class="ext-link__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+          <div class="ext-link__main">
+            <div class="ext-link__title">Comptes annuels BNB</div>
+            <div class="ext-link__sub">Banque Nationale de Belgique</div>
+          </div>
+          <span class="ext-link__arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M7 7h10v10"/></svg></span>
+        </a>''')
+    if biz.get("companyweb_url"):
+        fin_links.append(f'''
+        <a href="{_safe_html(biz["companyweb_url"])}" target="_blank" class="ext-link">
+          <span class="ext-link__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></span>
+          <div class="ext-link__main">
+            <div class="ext-link__title">Fiche CompanyWeb</div>
+            <div class="ext-link__sub">Score crédit & indicateurs</div>
+          </div>
+          <span class="ext-link__arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M7 7h10v10"/></svg></span>
+        </a>''')
+
+    # ─── Localisation rows ───
+    loc_rows = []
+    if locality or city:
+        city_label = (locality or city) + (f" ({postal})" if postal else "")
+        loc_rows.append((
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+            "Ville",
+            _safe_html(city_label),
+        ))
+    loc_rows.append((
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>',
+        "Pays", "Belgique",
+    ))
+    if category:
+        loc_rows.append((
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+            "Catégorie Google", _safe_html(category),
+        ))
+
+    loc_rows_html = "".join(
+        f'<div class="stat-row"><span class="stat-row__label">{icon}{label}</span><span class="stat-row__value">{value}</span></div>'
+        for icon, label, value in loc_rows
+    )
+
+    gmaps_link = ""
+    if biz.get("gmaps_url"):
+        gmaps_link = f'''
+        <a href="{_safe_html(biz["gmaps_url"])}" target="_blank" class="ext-link">
+          <span class="ext-link__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+          <div class="ext-link__main">
+            <div class="ext-link__title">Voir sur Google Maps</div>
+            <div class="ext-link__sub">Localisation, photos & itinéraire</div>
+          </div>
+          <span class="ext-link__arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M7 7h10v10"/></svg></span>
+        </a>'''
+
+    # ─── Signaux qualifiants ───
+    nace_str = biz.get("nace_activities") or ""
+    nace_count = len([e for e in _re.split(r"[;\n]+", nace_str) if e.strip()])
+    sig_data = []
+    if reviews_count:
+        avis_qual = 'Activité visible' if reviews_count >= 10 else 'Peu d’avis'
+        sig_data.append(("Volume d'avis", f"{reviews_count} avis · {avis_qual}"))
+    if age is not None:
+        sig_data.append(("Ancienneté",
+                        f"{age} ans · {'Activité stable' if age >= 3 else 'Récente'}"))
+    if website:
+        sig_data.append(("Site web actif",
+                        '<span style="color: var(--green-600);">Oui · digitalement présent</span>'))
+    else:
+        sig_data.append(("Site web",
+                        '<span style="color: var(--red-600);">Pas de site · opportunité</span>'))
+    if nace_count > 0:
+        sig_data.append(("Diversification",
+                        f"{nace_count} activité{'s' if nace_count > 1 else ''} NACE"))
+
+    sig_rows_html = "".join(
+        f'<div class="data-row"><span class="data-row__label">{label}</span><span class="data-row__value">{value}</span></div>'
+        for label, value in sig_data
+    )
+
+    # ─── Identité légale : data rows ───
+    legal_rows = []
+    if biz.get("vat_number"):
+        legal_rows.append(("Numéro TVA", f'<span class="data-row__value mono">{_safe_html(biz["vat_number"])}</span>'))
+    if biz.get("bce_number"):
+        legal_rows.append(("Numéro BCE", f'<span class="data-row__value mono">{_safe_html(biz["bce_number"])}</span>'))
+    if biz.get("legal_form"):
+        legal_rows.append(("Forme juridique", _safe_html(biz["legal_form"])))
+    if biz.get("creation_date"):
+        legal_rows.append(("Date de création", _safe_html(biz["creation_date"])))
+    if biz.get("capital"):
+        legal_rows.append(("Capital", _safe_html(biz["capital"])))
+    legal_rows_html = "".join(
+        f'<div class="data-row"><span class="data-row__label">{label}</span><div>{value}</div></div>'
+        if 'class="data-row__value' in str(value)
+        else f'<div class="data-row"><span class="data-row__label">{label}</span><span class="data-row__value">{value}</span></div>'
+        for label, value in legal_rows
+    )
+
+    # ─── NACE chips ───
+    nace_chips_html = ""
+    if nace_str:
+        entries = [e.strip() for e in _re.split(r"[;\n]+", nace_str) if e.strip()]
+        chips = []
+        for entry in entries:
+            m = _re.match(r"^\s*([\d.]+)\s*[-–]?\s*(.*)$", entry)
+            if m:
+                code, label = m.group(1), m.group(2).strip()
+            else:
+                code, label = "", entry
+            chips.append(
+                f'<div class="nace-chip" style="padding: 12px 14px; font-size: 13px;">'
+                + (f'<span class="nace-chip__code">{_safe_html(code)}</span>' if code else "")
+                + f'<span>{_safe_html(label)}</span></div>'
+            )
+        nace_chips_html = (
+            '<div style="display: flex; flex-direction: column; gap: 10px;">'
+            + "".join(chips)
+            + '</div>'
+        )
+
+    # ─── Historique tab content ───
+    last_call = biz.get("last_call_at")
+    callback = biz.get("callback_date")
+    notes = (biz.get("call_notes") or "").strip()
+    has_history = bool(last_call or callback or notes)
+    if not has_history:
+        history_html = f'''
+        <div class="eval-card">
+          <div class="empty-state">
+            <div class="empty-state__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>
+              </svg>
+            </div>
+            <div class="empty-state__title serif">Aucun appel pour l'instant</div>
+            <div class="empty-state__text">L'historique d'appels, notes et rappels apparaîtra ici dès le premier contact avec {name}.</div>
+          </div>
+        </div>'''
+    else:
+        history_html = f'''
+        <div class="eval-card">
+          <div class="data-grid">
+            <div class="data-row"><span class="data-row__label">Dernier appel</span><span class="data-row__value">{_safe_html(last_call) or "—"}</span></div>
+            <div class="data-row"><span class="data-row__label">Rappel prévu</span><span class="data-row__value">{_safe_html(callback) or "—"}</span></div>
+          </div>
+          {f'<div style="margin-top:16px;padding:14px;background:var(--cream);border-radius:11px;font-size:13px;color:var(--ink-700);"><strong>Notes :</strong><br>{_safe_html(notes)}</div>' if notes else ''}
+        </div>'''
+
+    # ─── Document HTML complet ───
+    # NOTE : CSS DIRECTEMENT issu de fiche-entreprise.html (la maquette).
+    # Pas de modifications, pas de préfixes, pas de !important — l'iframe
+    # garantit l'isolation complète.
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {{
+    --indigo-900: #1A0E5C; --indigo-700: #3425AF; --indigo-600: #4F3FF0;
+    --indigo-500: #6B5CFF; --indigo-100: #EAE7FF; --indigo-50: #F5F4FF;
+    --cream: #FBF9F4; --paper: #FFFFFF;
+    --ink-900: #0E0B2E; --ink-700: #2C2A4A; --ink-500: #6B6890;
+    --ink-400: #8C8AAE; --ink-200: #E3E1F0; --ink-100: #EFEDF7;
+    --gold: #E8A838; --green-600: #0F9D58; --green-50: #E6F7EE;
+    --red-600: #D33B3B; --red-50: #FDECEC; --amber-50: #FFF6E5;
+    --amber-700: #B5740A;
+    --shadow-sm: 0 1px 2px rgba(26, 14, 92, 0.04);
+    --shadow-md: 0 4px 16px rgba(26, 14, 92, 0.06);
+    --shadow-lg: 0 12px 40px rgba(26, 14, 92, 0.08);
+    --radius-lg: 16px;
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--cream); color: var(--ink-900);
+    font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    padding: 16px;
+  }}
+  .serif {{ font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; }}
+  .mono {{ font-family: 'JetBrains Mono', monospace; }}
+
+  .action-bar {{
+    background: rgba(251, 249, 244, 0.85);
+    backdrop-filter: saturate(180%) blur(20px);
+    border: 1px solid var(--ink-200); border-radius: 14px;
+    padding: 14px 22px; margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap;
+  }}
+  .breadcrumb {{ display: flex; align-items: center; gap: 10px; color: var(--ink-500); font-size: 13px; }}
+  .breadcrumb svg {{ width: 12px; height: 12px; }}
+  .tracking-strip {{ display: flex; gap: 8px; align-items: center; padding: 6px 14px; background: var(--paper); border: 1px solid var(--ink-200); border-radius: 999px; }}
+  .tracking-cell {{ display: flex; flex-direction: column; padding: 2px 14px; border-right: 1px solid var(--ink-100); min-width: 90px; }}
+  .tracking-cell:last-child {{ border-right: none; }}
+  .tracking-cell__label {{ font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-400); }}
+  .tracking-cell__value {{ font-size: 13px; font-weight: 600; color: var(--ink-900); display: flex; align-items: center; gap: 6px; }}
+  .pulse-dot {{ width: 7px; height: 7px; border-radius: 999px; background: var(--amber-700); position: relative; }}
+  .pulse-dot::before {{ content: ''; position: absolute; inset: -3px; border-radius: 999px; background: var(--amber-700); opacity: .3; animation: pulse 2s ease-out infinite; }}
+  @keyframes pulse {{ 0% {{ transform: scale(.9); opacity: .4; }} 100% {{ transform: scale(1.8); opacity: 0; }} }}
+
+  .shell {{ display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }}
+  .sidebar {{ display: flex; flex-direction: column; gap: 16px; }}
+  .card {{ background: var(--paper); border-radius: var(--radius-lg); border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); overflow: hidden; }}
+
+  .identity-card {{ padding: 24px 24px 20px; position: relative; }}
+  .identity-card::before {{ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--indigo-600), var(--indigo-500), var(--gold)); }}
+  .rank-badge {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: linear-gradient(135deg, #FFF1CC, #FFE4A3); color: #8A5A0A; border-radius: 999px; font-size: 11px; font-weight: 700; margin-bottom: 14px; }}
+  .rank-badge svg {{ width: 12px; height: 12px; }}
+  .company-name {{ font-family: 'Fraunces', Georgia, serif; font-size: 26px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; color: var(--ink-900); margin-bottom: 6px; }}
+  .company-form {{ font-size: 13px; color: var(--ink-500); margin-bottom: 18px; }}
+
+  .score-panel {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; margin: 0 -8px 18px; background: linear-gradient(135deg, var(--indigo-50) 0%, #F0EDFF 100%); border-radius: 14px; }}
+  .score-block {{ text-align: center; }}
+  .score-block__label {{ font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo-700); margin-bottom: 6px; opacity: .8; }}
+  .score-block__value {{ font-family: 'Fraunces', serif; font-size: 24px; font-weight: 600; color: var(--indigo-900); letter-spacing: -0.02em; display: flex; align-items: baseline; justify-content: center; gap: 3px; }}
+  .score-block__value small {{ font-size: 13px; color: var(--ink-500); font-weight: 500; }}
+  .reviews-count {{ font-size: 11px; color: var(--ink-500); margin-top: 2px; }}
+  .stars {{ color: var(--gold); letter-spacing: 1px; font-size: 12px; }}
+
+  .contact-list {{ display: flex; flex-direction: column; gap: 2px; }}
+  .contact-item {{ display: flex; align-items: center; gap: 12px; padding: 10px 0; color: var(--ink-700); font-size: 13px; border-bottom: 1px solid var(--ink-100); text-decoration: none; transition: color .15s; }}
+  .contact-item:last-child {{ border-bottom: none; }}
+  .contact-item:hover {{ color: var(--indigo-700); }}
+  .contact-item__icon {{ width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: var(--indigo-50); color: var(--indigo-700); display: grid; place-items: center; }}
+  .contact-item__icon svg {{ width: 15px; height: 15px; }}
+  .contact-item__main {{ flex: 1; min-width: 0; }}
+  .contact-item__label {{ font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); margin-bottom: 1px; }}
+  .contact-item__value {{ color: var(--ink-900); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+
+  .website-block {{ padding: 14px 0; border-bottom: 1px solid var(--ink-100); }}
+  .website-block__main {{ display: flex; align-items: center; gap: 12px; color: var(--ink-700); text-decoration: none; }}
+  .website-block__main:hover {{ color: var(--indigo-700); }}
+  .website-block__icon {{ width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: var(--indigo-50); color: var(--indigo-700); display: grid; place-items: center; }}
+  .website-block__icon svg {{ width: 15px; height: 15px; }}
+  .website-block__info {{ flex: 1; min-width: 0; }}
+  .website-block__label {{ font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); margin-bottom: 1px; }}
+  .website-block__url {{ color: var(--ink-900); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+
+  .admins-card {{ padding: 20px 24px; }}
+  .admins-card__title {{ display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo-700); margin-bottom: 14px; }}
+  .admins-card__title svg {{ width: 14px; height: 14px; }}
+  .admin-row {{ display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--ink-100); }}
+  .admin-row:last-child {{ border-bottom: none; }}
+  .admin-avatar {{ width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--indigo-600), var(--indigo-500)); color: white; display: grid; place-items: center; font-family: 'Fraunces', serif; font-size: 14px; font-weight: 600; flex-shrink: 0; }}
+  .admin-info {{ flex: 1; min-width: 0; }}
+  .admin-name {{ font-size: 13.5px; font-weight: 600; color: var(--ink-900); margin-bottom: 1px; }}
+  .admin-role {{ font-size: 11px; color: var(--ink-500); }}
+
+  .ai-footer {{ padding: 14px 24px; background: var(--indigo-50); border-top: 1px solid var(--ink-100); display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--ink-500); }}
+  .ai-dot {{ width: 6px; height: 6px; border-radius: 999px; background: var(--indigo-600); box-shadow: 0 0 0 3px var(--indigo-100); }}
+
+  .main {{ display: flex; flex-direction: column; gap: 20px; min-width: 0; }}
+  .tabs {{ display: flex; gap: 4px; padding: 6px; background: var(--paper); border-radius: 14px; border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); width: fit-content; }}
+  .tab {{ padding: 9px 18px; background: transparent; border: none; border-radius: 9px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--ink-500); cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 8px; }}
+  .tab svg {{ width: 15px; height: 15px; }}
+  .tab:hover {{ color: var(--ink-900); }}
+  .tab.is-active {{ background: var(--indigo-900); color: white; }}
+
+  .panel {{ display: none; flex-direction: column; gap: 16px; }}
+  .panel.is-active {{ display: flex; }}
+
+  .accordion {{ background: var(--paper); border-radius: var(--radius-lg); border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); overflow: hidden; }}
+  .acc-header {{ width: 100%; padding: 20px 24px; background: transparent; border: none; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 14px; font-family: inherit; transition: background .15s; }}
+  .acc-header:hover {{ background: var(--cream); }}
+  .acc-icon {{ width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex-shrink: 0; background: var(--indigo-50); color: var(--indigo-700); }}
+  .acc-icon svg {{ width: 18px; height: 18px; }}
+  .acc-titles {{ flex: 1; min-width: 0; }}
+  .acc-title {{ font-size: 15px; font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }}
+  .acc-subtitle {{ font-size: 12px; color: var(--ink-500); }}
+  .acc-chevron {{ width: 32px; height: 32px; border-radius: 10px; background: var(--ink-100); color: var(--ink-500); display: grid; place-items: center; transition: transform .25s; flex-shrink: 0; }}
+  .acc-chevron svg {{ width: 14px; height: 14px; }}
+  .accordion.is-open .acc-chevron {{ transform: rotate(180deg); background: var(--indigo-100); color: var(--indigo-700); }}
+  .acc-body {{ max-height: 0; overflow: hidden; transition: max-height .35s ease; }}
+  .accordion.is-open .acc-body {{ max-height: 1000px; }}
+  .acc-body-inner {{ padding: 0 24px 24px; border-top: 1px dashed var(--ink-200); margin-top: 4px; padding-top: 20px; }}
+
+  .data-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 24px; }}
+  .data-row {{ display: flex; flex-direction: column; gap: 3px; padding-bottom: 12px; border-bottom: 1px solid var(--ink-100); }}
+  .data-row__label {{ font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); }}
+  .data-row__value {{ font-size: 14px; color: var(--ink-900); font-weight: 500; }}
+  .data-row__value.mono {{ font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--indigo-700); }}
+  .nace-chip {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: var(--indigo-50); color: var(--indigo-700); border-radius: 7px; font-size: 12px; font-weight: 500; }}
+  .nace-chip__code {{ font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--indigo-900); }}
+
+  .ext-link {{ display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--cream); border-radius: 11px; text-decoration: none; border: 1px solid var(--ink-100); transition: all .2s; }}
+  .ext-link + .ext-link {{ margin-top: 10px; }}
+  .ext-link:hover {{ border-color: var(--indigo-600); background: var(--indigo-50); transform: translateX(2px); }}
+  .ext-link__icon {{ width: 36px; height: 36px; border-radius: 9px; background: var(--paper); color: var(--indigo-700); display: grid; place-items: center; border: 1px solid var(--ink-200); }}
+  .ext-link__icon svg {{ width: 17px; height: 17px; }}
+  .ext-link__main {{ flex: 1; }}
+  .ext-link__title {{ font-size: 13px; font-weight: 600; color: var(--ink-900); margin-bottom: 1px; }}
+  .ext-link__sub {{ font-size: 11px; color: var(--ink-500); }}
+  .ext-link__arrow {{ color: var(--ink-400); }}
+  .ext-link__arrow svg {{ width: 16px; height: 16px; }}
+
+  .eval-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
+  .eval-card {{ background: var(--paper); border: 1px solid var(--ink-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm); }}
+  .eval-card--full {{ grid-column: 1 / -1; }}
+  .eval-card__header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }}
+  .eval-card__icon {{ width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }}
+  .eval-card__icon svg {{ width: 16px; height: 16px; }}
+  .eval-card__title {{ font-size: 14px; font-weight: 600; color: var(--ink-900); }}
+  .eval-card__sub {{ font-size: 11px; color: var(--ink-500); }}
+  .stat-row {{ display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--ink-100); }}
+  .stat-row:last-child {{ border-bottom: none; }}
+  .stat-row__label {{ font-size: 12.5px; color: var(--ink-500); display: flex; align-items: center; gap: 8px; }}
+  .stat-row__label svg {{ width: 14px; height: 14px; color: var(--ink-400); }}
+  .stat-row__value {{ font-size: 13px; font-weight: 600; color: var(--ink-900); }}
+
+  .empty-state {{ text-align: center; padding: 50px 30px; color: var(--ink-500); }}
+  .empty-state__icon {{ width: 60px; height: 60px; margin: 0 auto 16px; background: var(--indigo-50); color: var(--indigo-700); border-radius: 18px; display: grid; place-items: center; }}
+  .empty-state__icon svg {{ width: 26px; height: 26px; }}
+  .empty-state__title {{ font-family: 'Fraunces', serif; font-size: 18px; color: var(--ink-900); margin-bottom: 6px; }}
+  .empty-state__text {{ font-size: 13px; max-width: 320px; margin: 0 auto; }}
+  .status-pill {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: var(--indigo-100); color: var(--indigo-700); border-radius: 999px; font-size: 11px; font-weight: 600; }}
+
+  @media (max-width: 900px) {{
+    .shell {{ grid-template-columns: 1fr; }}
+    .eval-grid {{ grid-template-columns: 1fr; }}
+    .data-grid {{ grid-template-columns: 1fr; }}
+  }}
+</style>
+</head>
+<body>
+
+<div class="action-bar">
+  <div class="breadcrumb">
+    <span>Prospects</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+    <span>{city}</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+    <span style="color: var(--ink-900); font-weight: 500;">{name}</span>
+  </div>
+  <div class="tracking-strip">
+    <div class="tracking-cell">
+      <span class="tracking-cell__label">Statut</span>
+      <span class="tracking-cell__value">
+        <span class="pulse-dot" style="background: {pulse_color};"></span>
+        {_safe_html(status)}
+      </span>
+    </div>
+    <div class="tracking-cell">
+      <span class="tracking-cell__label">Dernier appel</span>
+      <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("last_call_at") or "—")}</span>
+    </div>
+    <div class="tracking-cell">
+      <span class="tracking-cell__label">Rappel</span>
+      <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("callback_date") or "—")}</span>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="card">
+      <div class="identity-card">
+        {rank_html}
+        <h1 class="company-name">{name}</h1>
+        {f'<p class="company-form">{subtitle}</p>' if subtitle else ''}
+        {score_html}
+        {contact_list_html}
+      </div>
+      <div class="ai-footer">
+        <span class="ai-dot"></span>
+        <span>Enrichissement IA · <strong style="color: var(--ink-700);">{_safe_html(ai_label)}</strong></span>
+      </div>
+    </div>
+    {dirigeants_html}
+  </aside>
+
+  <main class="main">
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" data-panel="evaluation" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+        Évaluation
+      </button>
+      <button class="tab" data-panel="identite" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/>
+        </svg>
+        Identité légale
+      </button>
+      <button class="tab" data-panel="historique" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        Historique
+      </button>
+    </div>
+
+    <section class="panel is-active" id="panel-evaluation">
+      <div class="eval-grid">
+        <div class="eval-card">
+          <div class="eval-card__header">
+            <div class="eval-card__icon" style="background: var(--green-50); color: var(--green-600);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+              </svg>
+            </div>
+            <div>
+              <div class="eval-card__title">Santé financière</div>
+              <div class="eval-card__sub">Sources officielles BNB</div>
+            </div>
+          </div>
+          {fin_rows_html}
+          {f'<div style="margin-top: 16px;">{"".join(fin_links)}</div>' if fin_links else ''}
+        </div>
+
+        <div class="eval-card">
+          <div class="eval-card__header">
+            <div class="eval-card__icon" style="background: var(--amber-50); color: var(--amber-700);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+            </div>
+            <div>
+              <div class="eval-card__title">Présence locale</div>
+              <div class="eval-card__sub">Localisation & catégorie</div>
+            </div>
+          </div>
+          {loc_rows_html}
+          {f'<div style="margin-top: 16px;">{gmaps_link}</div>' if gmaps_link else ''}
+        </div>
+
+        <div class="eval-card eval-card--full">
+          <div class="eval-card__header">
+            <div class="eval-card__icon" style="background: var(--indigo-50); color: var(--indigo-700);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+              </svg>
+            </div>
+            <div>
+              <div class="eval-card__title">Signaux qualifiants</div>
+              <div class="eval-card__sub">Pourquoi ce prospect mérite votre attention</div>
+            </div>
+          </div>
+          <div class="data-grid">{sig_rows_html}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-identite">
+      <div class="accordion is-open">
+        <button class="acc-header" aria-expanded="true">
+          <span class="acc-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>
+          </span>
+          <div class="acc-titles">
+            <div class="acc-title">Données légales & immatriculation</div>
+            <div class="acc-subtitle">TVA, BCE, forme juridique</div>
+          </div>
+          <span class="acc-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        </button>
+        <div class="acc-body"><div class="acc-body-inner"><div class="data-grid">{legal_rows_html}</div></div></div>
+      </div>
+
+      {f'''<div class="accordion is-open">
+        <button class="acc-header" aria-expanded="true">
+          <span class="acc-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </span>
+          <div class="acc-titles">
+            <div class="acc-title">Codes d'activité NACE</div>
+            <div class="acc-subtitle">{nace_count} code(s) enregistré(s)</div>
+          </div>
+          <span class="acc-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        </button>
+        <div class="acc-body"><div class="acc-body-inner">{nace_chips_html}</div></div>
+      </div>''' if nace_chips_html else ''}
+    </section>
+
+    <section class="panel" id="panel-historique">{history_html}</section>
+  </main>
+</div>
+
+<script>
+  // Tab switching
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+  tabs.forEach(tab => {{
+    tab.addEventListener('click', () => {{
+      const target = tab.dataset.panel;
+      tabs.forEach(t => t.classList.remove('is-active'));
+      panels.forEach(p => p.classList.remove('is-active'));
+      tab.classList.add('is-active');
+      document.getElementById('panel-' + target).classList.add('is-active');
+    }});
+  }});
+
+  // Accordion toggle
+  document.querySelectorAll('.accordion').forEach(acc => {{
+    const header = acc.querySelector('.acc-header');
+    header.addEventListener('click', () => {{
+      acc.classList.toggle('is-open');
+      header.setAttribute('aria-expanded', acc.classList.contains('is-open'));
+    }});
+  }});
+</script>
+
+</body>
+</html>"""
 
 
 # ===========================================================================
