@@ -1374,112 +1374,953 @@ def _render_seo_audit_section(biz: dict) -> None:
 
 @st.dialog("Détails de l'entreprise", width="large")
 def show_business_details(biz: dict) -> None:
-    name = biz.get("name") or "Entreprise sans nom"
-    rank = biz.get("google_rank")
+    """Vue détaillée premium d'une fiche prospect (design Oui Allo).
+
+    Layout :
+      - Action bar sticky avec breadcrumb + tracking strip (statut/appel/rappel)
+        + boutons Appeler/Plus
+      - Shell 2 colonnes : sidebar 380px (identity + score + contact + dirigeants)
+        + main avec 3 tabs (Évaluation / Identité légale / Historique)
+    """
+    _inject_business_detail_styles()
+    _render_action_bar(biz)
+    _render_action_row(biz)
+
+    # Le shell 2-col est rendu via st.columns avec ratio approximant 380:760
+    # (Streamlit normalise sur 12 unités, on prend 4:8 ≈ 33:67).
+    side_col, main_col = st.columns([4, 8], gap="medium")
+    with side_col:
+        _render_sidebar_identity(biz)
+        _render_sidebar_dirigeants(biz)
+    with main_col:
+        tab_eval, tab_legal, tab_hist = st.tabs(
+            ["Évaluation", "Identité légale", "Historique"]
+        )
+        with tab_eval:
+            _render_eval_panel(biz)
+        with tab_legal:
+            _render_legal_panel(biz)
+        with tab_hist:
+            _render_history_panel(biz)
+
+
+# ===========================================================================
+# CSS injection (once per session)
+# ===========================================================================
+
+_BUSINESS_DETAIL_CSS = """
+<style>
+.bd-root {
+  --bd-indigo-900: #1A0E5C;
+  --bd-indigo-700: #3425AF;
+  --bd-indigo-600: #4F3FF0;
+  --bd-indigo-500: #6B5CFF;
+  --bd-indigo-100: #EAE7FF;
+  --bd-indigo-50:  #F5F4FF;
+  --bd-cream:      #FBF9F4;
+  --bd-paper:      #FFFFFF;
+  --bd-ink-900:    #0E0B2E;
+  --bd-ink-700:    #2C2A4A;
+  --bd-ink-500:    #6B6890;
+  --bd-ink-400:    #8C8AAE;
+  --bd-ink-200:    #E3E1F0;
+  --bd-ink-100:    #EFEDF7;
+  --bd-gold:       #E8A838;
+  --bd-green-600:  #0F9D58;
+  --bd-green-50:   #E6F7EE;
+  --bd-amber-50:   #FFF6E5;
+  --bd-amber-700:  #B5740A;
+}
+
+/* ========== ACTION BAR ========== */
+.bd-action-bar {
+  background: rgba(251, 249, 244, 0.92);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--bd-ink-200);
+  border-radius: 14px;
+  padding: 14px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.bd-breadcrumb {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--bd-ink-500); font-size: 13px;
+}
+.bd-breadcrumb .bd-current {
+  color: var(--bd-ink-900); font-weight: 600;
+}
+.bd-tracking-strip {
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 14px;
+  background: var(--bd-paper);
+  border: 1px solid var(--bd-ink-200);
+  border-radius: 999px;
+}
+.bd-tcell {
+  display: flex; flex-direction: column;
+  padding: 2px 14px;
+  border-right: 1px solid var(--bd-ink-100);
+  min-width: 90px;
+}
+.bd-tcell:last-child { border-right: none; }
+.bd-tcell-label {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--bd-ink-400);
+}
+.bd-tcell-value {
+  font-size: 13px; font-weight: 600; color: var(--bd-ink-900);
+  display: flex; align-items: center; gap: 6px;
+}
+.bd-pulse {
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--bd-amber-700); position: relative;
+}
+.bd-pulse::before {
+  content: ''; position: absolute; inset: -3px;
+  border-radius: 999px; background: var(--bd-amber-700);
+  opacity: .3; animation: bd-pulse 2s ease-out infinite;
+}
+@keyframes bd-pulse {
+  0% { transform: scale(.9); opacity: .4; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+/* ========== IDENTITY CARD ========== */
+.bd-card {
+  background: var(--bd-paper);
+  border-radius: 16px;
+  border: 1px solid var(--bd-ink-100);
+  box-shadow: 0 4px 16px rgba(26, 14, 92, 0.06);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.bd-identity { padding: 28px 28px 24px; position: relative; }
+.bd-identity::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--bd-indigo-600), var(--bd-indigo-500), var(--bd-gold));
+}
+.bd-rank-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px;
+  background: linear-gradient(135deg, #FFF1CC, #FFE4A3);
+  color: #8A5A0A;
+  border-radius: 999px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.02em; margin-bottom: 14px;
+}
+.bd-company-name {
+  font-size: 28px; font-weight: 600; letter-spacing: -0.025em;
+  line-height: 1.15; color: var(--bd-ink-900); margin-bottom: 6px;
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.bd-company-form {
+  font-size: 13px; color: var(--bd-ink-500); margin-bottom: 18px;
+}
+
+/* Score panel */
+.bd-score-panel {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  padding: 16px;
+  margin: 0 -8px 18px;
+  background: linear-gradient(135deg, var(--bd-indigo-50) 0%, #F0EDFF 100%);
+  border-radius: 14px;
+}
+.bd-score-block { text-align: center; }
+.bd-score-label {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--bd-indigo-700);
+  margin-bottom: 6px; opacity: .8;
+}
+.bd-score-value {
+  font-family: Georgia, serif; font-size: 26px; font-weight: 600;
+  color: var(--bd-indigo-900); letter-spacing: -0.02em;
+  display: flex; align-items: baseline; justify-content: center; gap: 3px;
+}
+.bd-score-value small { font-size: 13px; color: var(--bd-ink-500); font-weight: 500; }
+.bd-stars { color: var(--bd-gold); letter-spacing: 1px; font-size: 12px; }
+.bd-reviews-count { font-size: 11px; color: var(--bd-ink-500); margin-top: 2px; }
+
+/* Contact list */
+.bd-contact-list { display: flex; flex-direction: column; gap: 0; }
+.bd-contact-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0;
+  color: var(--bd-ink-700); font-size: 13px;
+  border-bottom: 1px solid var(--bd-ink-100);
+  text-decoration: none; transition: color .15s;
+}
+.bd-contact-item:last-child { border-bottom: none; }
+.bd-contact-item:hover { color: var(--bd-indigo-700); }
+.bd-icon-pill {
+  width: 32px; height: 32px; flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--bd-indigo-50);
+  color: var(--bd-indigo-700);
+  display: grid; place-items: center;
+}
+.bd-icon-pill svg { width: 15px; height: 15px; }
+.bd-contact-main { flex: 1; min-width: 0; }
+.bd-contact-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--bd-ink-400); margin-bottom: 1px;
+}
+.bd-contact-value {
+  color: var(--bd-ink-900); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Website block */
+.bd-website-block { padding: 14px 0; border-bottom: 1px solid var(--bd-ink-100); }
+.bd-website-main {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+  color: var(--bd-ink-700); text-decoration: none;
+}
+.bd-website-main:hover { color: var(--bd-indigo-700); }
+.bd-website-info { flex: 1; min-width: 0; }
+.bd-website-url {
+  color: var(--bd-ink-900); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* AI footer in identity card */
+.bd-ai-footer {
+  padding: 14px 28px;
+  background: var(--bd-indigo-50);
+  border-top: 1px solid var(--bd-ink-100);
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; color: var(--bd-ink-500);
+}
+.bd-ai-dot {
+  width: 6px; height: 6px; border-radius: 999px;
+  background: var(--bd-indigo-600);
+  box-shadow: 0 0 0 3px var(--bd-indigo-100);
+}
+
+/* Dirigeants card */
+.bd-admins { padding: 20px 24px; }
+.bd-admins-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--bd-indigo-700);
+  margin-bottom: 14px;
+}
+.bd-admin-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--bd-ink-100);
+}
+.bd-admin-row:last-child { border-bottom: none; }
+.bd-admin-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--bd-indigo-600), var(--bd-indigo-500));
+  color: white;
+  display: grid; place-items: center;
+  font-family: Georgia, serif; font-size: 14px; font-weight: 600;
+  flex-shrink: 0;
+}
+.bd-admin-name { font-size: 13.5px; font-weight: 600; color: var(--bd-ink-900); margin-bottom: 1px; }
+.bd-admin-role { font-size: 11px; color: var(--bd-ink-500); }
+
+/* ========== EVAL CARDS ========== */
+.bd-eval-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+.bd-eval-card {
+  background: var(--bd-paper); border: 1px solid var(--bd-ink-100);
+  border-radius: 16px; padding: 22px;
+  box-shadow: 0 1px 2px rgba(26, 14, 92, 0.04);
+}
+.bd-eval-card--full { grid-column: 1 / -1; }
+.bd-eval-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.bd-eval-icon {
+  width: 34px; height: 34px; border-radius: 10px;
+  display: grid; place-items: center;
+}
+.bd-eval-icon svg { width: 16px; height: 16px; }
+.bd-eval-title { font-size: 14px; font-weight: 600; color: var(--bd-ink-900); }
+.bd-eval-sub { font-size: 11px; color: var(--bd-ink-500); }
+
+.bd-stat-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--bd-ink-100);
+}
+.bd-stat-row:last-child { border-bottom: none; }
+.bd-stat-label { font-size: 12.5px; color: var(--bd-ink-500); display: flex; align-items: center; gap: 8px; }
+.bd-stat-value { font-size: 13px; font-weight: 600; color: var(--bd-ink-900); }
+
+.bd-status-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px;
+  background: var(--bd-indigo-100); color: var(--bd-indigo-700);
+  border-radius: 999px; font-size: 11px; font-weight: 600;
+}
+.bd-pill-green { background: var(--bd-green-50) !important; color: var(--bd-green-600) !important; }
+
+/* Ext link */
+.bd-ext-link {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: var(--bd-cream);
+  border-radius: 11px;
+  text-decoration: none;
+  border: 1px solid var(--bd-ink-100);
+  transition: all .2s;
+  margin-top: 10px;
+}
+.bd-ext-link:hover {
+  border-color: var(--bd-indigo-600);
+  background: var(--bd-indigo-50);
+  transform: translateX(2px);
+}
+.bd-ext-icon {
+  width: 36px; height: 36px; border-radius: 9px;
+  background: var(--bd-paper); color: var(--bd-indigo-700);
+  display: grid; place-items: center;
+  border: 1px solid var(--bd-ink-200);
+}
+.bd-ext-main { flex: 1; }
+.bd-ext-title { font-size: 13px; font-weight: 600; color: var(--bd-ink-900); margin-bottom: 1px; }
+.bd-ext-sub { font-size: 11px; color: var(--bd-ink-500); }
+
+/* Data grid (NACE / legal) */
+.bd-data-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 24px; }
+.bd-data-row {
+  display: flex; flex-direction: column; gap: 3px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--bd-ink-100);
+}
+.bd-data-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--bd-ink-400);
+}
+.bd-data-value { font-size: 14px; color: var(--bd-ink-900); font-weight: 500; }
+.bd-mono { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--bd-indigo-700); }
+
+.bd-nace-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 14px;
+  background: var(--bd-indigo-50); color: var(--bd-indigo-700);
+  border-radius: 7px; font-size: 13px; font-weight: 500;
+  margin-bottom: 10px;
+}
+.bd-nace-code {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-weight: 600; color: var(--bd-indigo-900);
+}
+
+/* Empty state */
+.bd-empty {
+  text-align: center; padding: 60px 30px; color: var(--bd-ink-500);
+}
+.bd-empty-icon {
+  width: 60px; height: 60px; margin: 0 auto 16px;
+  background: var(--bd-indigo-50); color: var(--bd-indigo-700);
+  border-radius: 18px; display: grid; place-items: center;
+}
+.bd-empty-title {
+  font-family: Georgia, serif; font-size: 18px;
+  color: var(--bd-ink-900); margin-bottom: 6px;
+}
+.bd-empty-text { font-size: 13px; max-width: 360px; margin: 0 auto; }
+</style>
+"""
+
+
+def _inject_business_detail_styles() -> None:
+    """Injecte le CSS premium UNE FOIS par session Streamlit."""
+    if st.session_state.get("_bd_css_injected"):
+        return
+    st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
+    st.session_state["_bd_css_injected"] = True
+
+
+# ===========================================================================
+# Action bar (breadcrumb + tracking strip)
+# ===========================================================================
+
+def _render_action_bar(biz: dict) -> None:
+    """Sticky action bar avec breadcrumb + 3 cellules de tracking."""
+    name = _safe_html(biz.get("name") or "Entreprise")
+    city = _safe_html(biz.get("city") or biz.get("locality") or "—")
+    status = biz.get("call_status") or "À appeler"
+    last_call = biz.get("last_call_at") or "—"
+    callback = biz.get("callback_date") or "—"
+
+    # Pulse dot rouge si "À rappeler" (urgence), sinon ambre par défaut
+    pulse_color = "#D33B3B" if status == "À rappeler" else "#B5740A"
+
+    html = (
+        '<div class="bd-root">'
+        '<div class="bd-action-bar">'
+        '<div class="bd-breadcrumb">'
+        '<span>Prospects</span>'
+        '<span>›</span>'
+        f'<span>{city}</span>'
+        '<span>›</span>'
+        f'<span class="bd-current">{name}</span>'
+        '</div>'
+        '<div class="bd-tracking-strip">'
+        '<div class="bd-tcell">'
+        '<span class="bd-tcell-label">Statut</span>'
+        '<span class="bd-tcell-value">'
+        f'<span class="bd-pulse" style="background:{pulse_color};"></span>'
+        f'{_safe_html(status)}</span></div>'
+        '<div class="bd-tcell">'
+        '<span class="bd-tcell-label">Dernier appel</span>'
+        f'<span class="bd-tcell-value" style="color:#8C8AAE;">{_safe_html(last_call)}</span>'
+        '</div>'
+        '<div class="bd-tcell">'
+        '<span class="bd-tcell-label">Rappel</span>'
+        f'<span class="bd-tcell-value" style="color:#8C8AAE;">{_safe_html(callback)}</span>'
+        '</div>'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_action_row(biz: dict) -> None:
+    """Boutons Streamlit interactifs (Appeler + sélecteur statut)."""
+    safe_key = (biz.get("dedup_key") or "_no").replace(":", "_").replace("|", "_")
+    phone = biz.get("phone")
     status = biz.get("call_status") or "À appeler"
 
+    a1, a2, _ = st.columns([2, 3, 7])
+    with a1:
+        disabled = not phone or not is_configured()
+        if st.button(
+            "📞 Appeler maintenant",
+            key=f"bd_call_{safe_key}",
+            type="primary",
+            width="stretch",
+            disabled=disabled,
+            help=("Click-to-call Ringover" if not disabled else
+                  ("Pas de numéro" if not phone else "RINGOVER_API_KEY manquante")),
+        ):
+            res = click_to_call(phone)
+            st.toast(res['message'],
+                     icon=":material/call_made:" if res["ok"] else ":material/error:")
+    with a2:
+        status_key = f"bd_status_{safe_key}"
+        if status_key not in st.session_state:
+            st.session_state[status_key] = status
+
+        def _on_change(_k=status_key, _d=biz.get("dedup_key")):
+            new_val = st.session_state[_k]
+            if _d and not _d.startswith("_no_"):
+                update_call_fields(_d, call_status=new_val)
+                st.toast(f"Statut : {new_val}", icon=":material/save:")
+
+        st.selectbox(
+            "Statut",
+            CALL_STATUSES,
+            index=CALL_STATUSES.index(status) if status in CALL_STATUSES else 0,
+            key=status_key,
+            on_change=_on_change,
+            label_visibility="collapsed",
+        )
+
+
+# ===========================================================================
+# Sidebar : identity card + dirigeants
+# ===========================================================================
+
+_ICON_PHONE = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 '
+    '19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 '
+    '012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 '
+    '006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>'
+    '</svg>'
+)
+_ICON_MAIL = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+    '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>'
+    '<polyline points="22,6 12,13 2,6"/></svg>'
+)
+_ICON_GLOBE = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+    '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>'
+    '<path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 '
+    '01-4-10 15.3 15.3 0 014-10z"/></svg>'
+)
+_ICON_PIN = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+    '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>'
+    '<circle cx="12" cy="10" r="3"/></svg>'
+)
+
+
+def _render_sidebar_identity(biz: dict) -> None:
+    """Identity card de la sidebar : badge rang + nom + score + contact list."""
+    name = _safe_html(biz.get("name") or "—")
+    rank = biz.get("google_rank")
+    form = _safe_html(biz.get("legal_form") or "")
+    cat = _safe_html(biz.get("category") or "")
+    city = _safe_html(biz.get("city") or biz.get("locality") or "")
+
+    subtitle_parts = [s for s in [form, cat, f"{city}, BE" if city else ""] if s]
+    subtitle = " · ".join(subtitle_parts)
+
+    rating = biz.get("rating")
+    reviews_count = biz.get("reviews_count") or 0
+
+    # Calcul ancienneté à partir de creation_date (format "DD/MM/YYYY" ou "YYYY-MM-DD")
+    annee_creation = None
+    age = None
+    cd = biz.get("creation_date") or ""
+    import re as _re
+    m = _re.search(r"(\d{4})", str(cd))
+    if m:
+        annee_creation = int(m.group(1))
+        from datetime import datetime as _dt
+        age = max(0, _dt.now().year - annee_creation)
+
+    # ─── Construction HTML ───
+    rank_html = ""
+    if rank:
+        suffix = "er" if rank == 1 else "e"
+        rank_html = (
+            f'<div class="bd-rank-badge">★ Prospect N°{rank}{suffix}</div>'
+        )
+
+    # Score panel
+    score_html = ""
+    if rating or age is not None:
+        rating_block = ""
+        if rating:
+            try:
+                stars = "★" * int(round(float(rating))) + "☆" * (5 - int(round(float(rating))))
+            except (ValueError, TypeError):
+                stars = ""
+            rating_block = (
+                '<div class="bd-score-block">'
+                '<div class="bd-score-label">Réputation Google</div>'
+                f'<div class="bd-score-value">{_safe_html(rating)} <small>/5</small></div>'
+                f'<div class="bd-stars">{stars}</div>'
+                f'<div class="bd-reviews-count">{reviews_count} avis</div>'
+                '</div>'
+            )
+        age_block = ""
+        if age is not None:
+            age_block = (
+                '<div class="bd-score-block">'
+                '<div class="bd-score-label">Ancienneté</div>'
+                f'<div class="bd-score-value">{age} <small>ans</small></div>'
+                f'<div class="bd-reviews-count" style="margin-top:16px;">'
+                f'depuis {annee_creation}</div>'
+                '</div>'
+            )
+        if rating_block or age_block:
+            score_html = (
+                '<div class="bd-score-panel">'
+                + rating_block + age_block +
+                '</div>'
+            )
+
+    # Contact list
+    contact_items = []
+    phone = biz.get("phone")
+    if phone:
+        contact_items.append(
+            f'<a href="tel:{_safe_html(phone)}" class="bd-contact-item">'
+            f'<span class="bd-icon-pill">{_ICON_PHONE}</span>'
+            '<div class="bd-contact-main">'
+            '<div class="bd-contact-label">Téléphone</div>'
+            f'<div class="bd-contact-value">{_safe_html(phone)}</div>'
+            '</div></a>'
+        )
+    email = biz.get("email")
+    if email:
+        contact_items.append(
+            f'<a href="mailto:{_safe_html(email)}" class="bd-contact-item">'
+            f'<span class="bd-icon-pill">{_ICON_MAIL}</span>'
+            '<div class="bd-contact-main">'
+            '<div class="bd-contact-label">Email</div>'
+            f'<div class="bd-contact-value">{_safe_html(email)}</div>'
+            '</div></a>'
+        )
+
+    # Website block (avec bouton audit SEO juste après via Streamlit)
+    website = biz.get("website")
+    website_block = ""
+    if website:
+        url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
+        website_block = (
+            '<div class="bd-website-block">'
+            f'<a href="{_safe_html(website)}" target="_blank" class="bd-website-main">'
+            f'<span class="bd-icon-pill">{_ICON_GLOBE}</span>'
+            '<div class="bd-website-info">'
+            '<div class="bd-contact-label">Site web</div>'
+            f'<div class="bd-website-url">{_safe_html(url_display)}</div>'
+            '</div></a>'
+            '</div>'
+        )
+
+    # Adresse
+    address = biz.get("address")
+    address_block = ""
+    if address:
+        full_addr = address
+        postal = biz.get("postal_code")
+        locality = biz.get("locality") or biz.get("city")
+        if postal and locality and postal not in str(address):
+            full_addr = f"{address}, {postal} {locality}"
+        address_block = (
+            '<a href="#" class="bd-contact-item">'
+            f'<span class="bd-icon-pill">{_ICON_PIN}</span>'
+            '<div class="bd-contact-main">'
+            '<div class="bd-contact-label">Adresse</div>'
+            f'<div class="bd-contact-value">{_safe_html(full_addr)}</div>'
+            '</div></a>'
+        )
+
+    contact_list_html = (
+        '<div class="bd-contact-list">'
+        + "".join(contact_items)
+        + website_block
+        + address_block +
+        '</div>'
+    )
+
+    # AI footer
+    ai_label = "non configurée"
+    try:
+        ai_label = ai_provider_label()
+    except Exception:
+        pass
+    ai_footer = (
+        '<div class="bd-ai-footer">'
+        '<span class="bd-ai-dot"></span>'
+        f'<span>Enrichissement IA · <strong style="color:#2C2A4A;">{_safe_html(ai_label)}</strong></span>'
+        '</div>'
+    )
+
+    full_card = (
+        '<div class="bd-root">'
+        '<div class="bd-card">'
+        '<div class="bd-identity">'
+        + rank_html +
+        f'<h1 class="bd-company-name">{name}</h1>'
+        + (f'<p class="bd-company-form">{subtitle}</p>' if subtitle else '')
+        + score_html
+        + contact_list_html +
+        '</div>'
+        + ai_footer +
+        '</div></div>'
+    )
+    st.markdown(full_card, unsafe_allow_html=True)
+
+    # Bouton "Lancer l'audit SEO" en widget Streamlit natif (interactif)
+    if website:
+        safe_key = (biz.get("dedup_key") or "_no").replace(":", "_").replace("|", "_")
+        if st.button(
+            "🔍 Lancer l'audit SEO du site",
+            key=f"bd_audit_{safe_key}",
+            width="stretch",
+        ):
+            st.session_state[f"bd_audit_open_{safe_key}"] = True
+
+        if st.session_state.get(f"bd_audit_open_{safe_key}"):
+            with st.expander("Résultats audit SEO", expanded=True):
+                _render_seo_audit_section(biz)
+
+
+def _render_sidebar_dirigeants(biz: dict) -> None:
+    """Carte Dirigeants avec avatars (initiales)."""
+    managers_str = (biz.get("managers") or "").strip()
+    if not managers_str:
+        return
+
+    # Split sur virgule / point-virgule / saut de ligne
+    import re as _re
+    names = [n.strip() for n in _re.split(r"[,;\n]+", managers_str) if n.strip()]
+    if not names:
+        return
+
+    rows = []
+    for full_name in names[:8]:  # max 8 dirigeants affichés
+        # Initiales : 2 premières lettres de prénom + nom
+        parts = full_name.split()
+        if len(parts) >= 2:
+            initials = (parts[0][:1] + parts[-1][:1]).upper()
+        else:
+            initials = full_name[:2].upper()
+        rows.append(
+            '<div class="bd-admin-row">'
+            f'<div class="bd-admin-avatar">{_safe_html(initials)}</div>'
+            '<div style="flex:1;min-width:0;">'
+            f'<div class="bd-admin-name">{_safe_html(full_name)}</div>'
+            '<div class="bd-admin-role">Administrateur</div>'
+            '</div></div>'
+        )
+
+    html = (
+        '<div class="bd-root">'
+        '<div class="bd-card bd-admins">'
+        '<div class="bd-admins-title">👥 Dirigeants</div>'
+        + "".join(rows) +
+        '</div></div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ===========================================================================
+# Main : 3 tabs (Évaluation / Identité légale / Historique)
+# ===========================================================================
+
+def _render_eval_panel(biz: dict) -> None:
+    """Onglet Évaluation : briefing IA + 3 eval-cards (financier, local, signaux)."""
+    # Briefing IA en premier (action principale du commercial)
+    _render_ai_briefing_section(biz)
+
+    # 3 eval-cards
+    BCE_STATUS = "Actif" if (biz.get("bce_status") or "").lower() in ("", "actif", "active") else (biz.get("bce_status") or "—")
+
+    # Carte 1 : Santé financière
+    fin_rows = []
+    if biz.get("establishments_count"):
+        fin_rows.append(("🏢 Établissements actifs", str(biz["establishments_count"])))
+    if biz.get("creation_date"):
+        fin_rows.append(("⏱ Activité depuis", _safe_html(biz["creation_date"])))
+    fin_rows.append(("✓ Statut BCE", f'<span class="bd-status-pill bd-pill-green">{_safe_html(BCE_STATUS)}</span>'))
+    if biz.get("nbb_revenue"):
+        fin_rows.append(("💰 Chiffre d'affaires", _safe_html(biz["nbb_revenue"])))
+    if biz.get("nbb_equity"):
+        fin_rows.append(("💼 Fonds propres", _safe_html(biz["nbb_equity"])))
+    if biz.get("nbb_employees"):
+        fin_rows.append(("👥 Effectif", _safe_html(biz["nbb_employees"])))
+
+    fin_html = (
+        '<div class="bd-eval-card">'
+        '<div class="bd-eval-head">'
+        '<div class="bd-eval-icon" style="background:#E6F7EE;color:#0F9D58;">📈</div>'
+        '<div><div class="bd-eval-title">Santé financière</div>'
+        '<div class="bd-eval-sub">Sources officielles BNB</div></div>'
+        '</div>'
+        + "".join(
+            f'<div class="bd-stat-row"><span class="bd-stat-label">{label}</span>'
+            f'<span class="bd-stat-value">{value}</span></div>'
+            for label, value in fin_rows
+        )
+    )
+    if biz.get("nbb_url"):
+        fin_html += (
+            f'<a href="{_safe_html(biz["nbb_url"])}" target="_blank" class="bd-ext-link">'
+            '<span class="bd-ext-icon">📄</span>'
+            '<div class="bd-ext-main">'
+            '<div class="bd-ext-title">Comptes annuels BNB</div>'
+            '<div class="bd-ext-sub">Banque Nationale de Belgique</div></div></a>'
+        )
+    if biz.get("companyweb_url"):
+        fin_html += (
+            f'<a href="{_safe_html(biz["companyweb_url"])}" target="_blank" class="bd-ext-link">'
+            '<span class="bd-ext-icon">📊</span>'
+            '<div class="bd-ext-main">'
+            '<div class="bd-ext-title">Fiche CompanyWeb</div>'
+            '<div class="bd-ext-sub">Score crédit & indicateurs</div></div></a>'
+        )
+    fin_html += '</div>'
+
+    # Carte 2 : Présence locale
+    loc_rows = []
+    if biz.get("locality") or biz.get("city"):
+        city_label = biz.get("locality") or biz.get("city")
+        if biz.get("postal_code"):
+            city_label = f"{city_label} ({biz['postal_code']})"
+        loc_rows.append(("📍 Ville", _safe_html(city_label)))
+    loc_rows.append(("🌍 Pays", "Belgique"))
+    if biz.get("category"):
+        loc_rows.append(("🗂 Catégorie Google", _safe_html(biz["category"])))
+    if biz.get("hours"):
+        loc_rows.append(("🕐 Horaires", _safe_html(biz["hours"][:60] + ("…" if len(biz["hours"]) > 60 else ""))))
+
+    loc_html = (
+        '<div class="bd-eval-card">'
+        '<div class="bd-eval-head">'
+        '<div class="bd-eval-icon" style="background:#FFF6E5;color:#B5740A;">📍</div>'
+        '<div><div class="bd-eval-title">Présence locale</div>'
+        '<div class="bd-eval-sub">Localisation & catégorie</div></div>'
+        '</div>'
+        + "".join(
+            f'<div class="bd-stat-row"><span class="bd-stat-label">{label}</span>'
+            f'<span class="bd-stat-value">{value}</span></div>'
+            for label, value in loc_rows
+        )
+    )
+    if biz.get("gmaps_url"):
+        loc_html += (
+            f'<a href="{_safe_html(biz["gmaps_url"])}" target="_blank" class="bd-ext-link">'
+            '<span class="bd-ext-icon">🗺</span>'
+            '<div class="bd-ext-main">'
+            '<div class="bd-ext-title">Voir sur Google Maps</div>'
+            '<div class="bd-ext-sub">Localisation, photos & itinéraire</div></div></a>'
+        )
+    loc_html += '</div>'
+
+    # Carte 3 : Signaux qualifiants (full width)
+    nace_count = len((biz.get("nace_activities") or "").split(";"))
+    nace_count = max(1, nace_count) if biz.get("nace_activities") else 0
+    reviews = biz.get("reviews_count") or 0
+    website_ok = bool(biz.get("website"))
+
+    signaux_data = []
+    if reviews:
+        avis_label = "Activité visible" if reviews >= 10 else "Peu d'avis"
+        signaux_data.append(("Volume d'avis", f"{reviews} avis · {avis_label}"))
+    # Age (re-calculé)
+    cd = biz.get("creation_date") or ""
+    import re as _re
+    m = _re.search(r"(\d{4})", str(cd))
+    if m:
+        from datetime import datetime as _dt
+        age = max(0, _dt.now().year - int(m.group(1)))
+        stab = "Activité stable" if age >= 3 else "Récente"
+        signaux_data.append(("Ancienneté", f"{age} ans · {stab}"))
+    if website_ok:
+        signaux_data.append(("Site web actif", '<span style="color:#0F9D58;">Oui · digitalement présent</span>'))
+    else:
+        signaux_data.append(("Site web", '<span style="color:#D33B3B;">Pas de site · opportunité</span>'))
+    if nace_count > 0:
+        signaux_data.append(("Diversification", f"{nace_count} activité{'s' if nace_count > 1 else ''} NACE"))
+
+    signaux_html = (
+        '<div class="bd-eval-card bd-eval-card--full">'
+        '<div class="bd-eval-head">'
+        '<div class="bd-eval-icon" style="background:#F5F4FF;color:#3425AF;">✓</div>'
+        '<div><div class="bd-eval-title">Signaux qualifiants</div>'
+        '<div class="bd-eval-sub">Pourquoi ce prospect mérite votre attention</div></div>'
+        '</div>'
+        '<div class="bd-data-grid">'
+        + "".join(
+            f'<div class="bd-data-row"><span class="bd-data-label">{label}</span>'
+            f'<span class="bd-data-value">{value}</span></div>'
+            for label, value in signaux_data
+        ) +
+        '</div></div>'
+    )
+
     st.markdown(
-        f"### {name}<br>"
-        f"{_rank_badge_html(rank)} &nbsp; {_status_chip_html(status)}",
+        '<div class="bd-root"><div class="bd-eval-grid">'
+        + fin_html + loc_html + signaux_html +
+        '</div></div>',
         unsafe_allow_html=True,
     )
 
-    # ---- Briefing IA pré-appel ----
-    _render_ai_briefing_section(biz)
 
-    # ---- Audit SEO complet (site web + GMB) ----
-    _render_seo_audit_section(biz)
-
-    BRAND = "#7c3aed"
-    GOLD = "#f59e0b"
-    GREEN = "#059669"
-
-    def _section(icon_name, title, color=BRAND):
-        return (f'<div style="display:flex;align-items:center;gap:6px;font-weight:700;'
-                f'color:{color};font-size:0.92rem;margin:0.6rem 0 0.4rem 0;'
-                f'text-transform:uppercase;letter-spacing:0.04em;">'
-                f'{lucide(icon_name, 16, color, 2.2)}<span>{title}</span></div>')
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(_section("map-pin", "Coordonnées"), unsafe_allow_html=True)
-        if biz.get("address"):
-            st.markdown(f"{lucide('map', 14, BRAND)} {biz['address']}", unsafe_allow_html=True)
-        if biz.get("phone"):
-            st.markdown(f"{lucide('phone', 14, BRAND)} [{biz['phone']}](tel:{biz['phone']})",
-                        unsafe_allow_html=True)
-        if biz.get("email"):
-            st.markdown(f"{lucide('mail', 14, BRAND)} [{biz['email']}](mailto:{biz['email']})",
-                        unsafe_allow_html=True)
-        if biz.get("website"):
-            st.markdown(f"{lucide('globe', 14, BRAND)} [{biz['website']}]({biz['website']})",
-                        unsafe_allow_html=True)
-
-        st.markdown(_section("landmark", "Identité légale"), unsafe_allow_html=True)
+def _render_legal_panel(biz: dict) -> None:
+    """Onglet Identité légale : 3 expanders (données, NACE, sources)."""
+    with st.expander("Données légales & immatriculation", expanded=True):
+        rows = []
         if biz.get("vat_number"):
-            st.write(f"TVA : `{biz['vat_number']}`")
+            rows.append(("Numéro TVA", f'<span class="bd-mono">{_safe_html(biz["vat_number"])}</span>'))
         if biz.get("bce_number"):
-            st.write(f"BCE : `{biz['bce_number']}`")
+            rows.append(("Numéro BCE", f'<span class="bd-mono">{_safe_html(biz["bce_number"])}</span>'))
         if biz.get("legal_form"):
-            st.write(f"Forme : {biz['legal_form']}")
+            rows.append(("Forme juridique", _safe_html(biz["legal_form"])))
         if biz.get("creation_date"):
-            st.write(f"Créée le : {biz['creation_date']}")
-        if biz.get("managers"):
-            st.markdown(f"{lucide('users', 14, BRAND)} **Dirigeant(s) :** {biz['managers']}",
-                        unsafe_allow_html=True)
-        if biz.get("nace_activities"):
-            st.caption(f"NACE : {biz['nace_activities']}")
+            rows.append(("Date de création", _safe_html(biz["creation_date"])))
+        if biz.get("capital"):
+            rows.append(("Capital", _safe_html(biz["capital"])))
+        if rows:
+            st.markdown(
+                '<div class="bd-root"><div class="bd-data-grid">'
+                + "".join(
+                    f'<div class="bd-data-row"><span class="bd-data-label">{label}</span>'
+                    f'<span class="bd-data-value">{value}</span></div>'
+                    for label, value in rows
+                )
+                + '</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Aucune donnée légale disponible.")
 
-    with c2:
-        st.markdown(_section("star", "Réputation Google", GOLD), unsafe_allow_html=True)
-        if biz.get("rating"):
+    with st.expander("Codes d'activité NACE", expanded=True):
+        nace = (biz.get("nace_activities") or "").strip()
+        if nace:
+            # Format attendu : "43.410 - Travaux de couverture; 41.002 - Construction..."
+            import re as _re
+            entries = [e.strip() for e in _re.split(r"[;\n]+", nace) if e.strip()]
+            chips = []
+            for entry in entries:
+                m = _re.match(r"^\s*([\d.]+)\s*[-–]?\s*(.*)$", entry)
+                if m:
+                    code, label = m.group(1), m.group(2).strip()
+                else:
+                    code, label = "", entry
+                chips.append(
+                    '<div class="bd-nace-chip">'
+                    + (f'<span class="bd-nace-code">{_safe_html(code)}</span>' if code else "")
+                    + f'<span>{_safe_html(label)}</span></div>'
+                )
             st.markdown(
-                f"{lucide('star', 14, GOLD)} **{biz['rating']}** "
-                f"<span style='color:#64748b;'>({biz.get('reviews_count') or 0} avis)</span>",
+                '<div class="bd-root">'
+                + "".join(chips) +
+                '</div>',
                 unsafe_allow_html=True,
             )
-        if biz.get("category"):
-            st.write(f"Catégorie : {biz['category']}")
-        if biz.get("hours"):
-            st.caption(f"Horaires : {biz['hours']}")
-        if biz.get("gmaps_url"):
-            st.markdown(
-                f"{lucide('external-link', 14, BRAND)} [Voir sur Google Maps]({biz['gmaps_url']})",
-                unsafe_allow_html=True,
-            )
+        else:
+            st.caption("Aucun code NACE renseigné.")
 
-        st.markdown(_section("coins", "Données financières", GREEN), unsafe_allow_html=True)
-        for label, key in [
-            ("Chiffre d'affaires", "nbb_revenue"),
-            ("Fonds propres", "nbb_equity"),
-            ("Effectif", "nbb_employees"),
-            ("Année", "nbb_year"),
-            ("Capital", "capital"),
-            ("Établissements", "establishments_count"),
-            ("Score solvabilité", "companyweb_score"),
-        ]:
-            v = biz.get(key)
-            if v not in (None, "", 0):
-                st.write(f"{label} : {v}")
-        if biz.get("nbb_url"):
-            st.markdown(
-                f"{lucide('external-link', 14, GREEN)} [Comptes annuels BNB]({biz['nbb_url']})",
-                unsafe_allow_html=True,
-            )
-        if biz.get("companyweb_url"):
-            st.markdown(
-                f"{lucide('external-link', 14, GREEN)} [Fiche CompanyWeb]({biz['companyweb_url']})",
-                unsafe_allow_html=True,
-            )
+    if biz.get("nbb_url") or biz.get("companyweb_url"):
+        with st.expander("Sources officielles", expanded=False):
+            html_parts = ['<div class="bd-root">']
+            if biz.get("nbb_url"):
+                html_parts.append(
+                    f'<a href="{_safe_html(biz["nbb_url"])}" target="_blank" class="bd-ext-link">'
+                    '<span class="bd-ext-icon">📄</span>'
+                    '<div class="bd-ext-main">'
+                    '<div class="bd-ext-title">Comptes annuels BNB</div>'
+                    '<div class="bd-ext-sub">consult.cbso.nbb.be</div></div></a>'
+                )
+            if biz.get("companyweb_url"):
+                html_parts.append(
+                    f'<a href="{_safe_html(biz["companyweb_url"])}" target="_blank" class="bd-ext-link">'
+                    '<span class="bd-ext-icon">📊</span>'
+                    '<div class="bd-ext-main">'
+                    '<div class="bd-ext-title">Fiche CompanyWeb</div>'
+                    '<div class="bd-ext-sub">companyweb.be</div></div></a>'
+                )
+            html_parts.append('</div>')
+            st.markdown("".join(html_parts), unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown(_section("phone-call", "Suivi d'appel"), unsafe_allow_html=True)
+
+def _render_history_panel(biz: dict) -> None:
+    """Onglet Historique : notes + métriques OU empty state."""
+    last_call = biz.get("last_call_at")
+    callback = biz.get("callback_date")
+    notes = (biz.get("call_notes") or "").strip()
+    has_history = bool(last_call or callback or notes)
+
+    if not has_history:
+        name = _safe_html(biz.get("name") or "cette entreprise")
+        st.markdown(
+            '<div class="bd-root"><div class="bd-eval-card">'
+            '<div class="bd-empty">'
+            '<div class="bd-empty-icon">📞</div>'
+            '<div class="bd-empty-title">Aucun appel pour l\'instant</div>'
+            f'<div class="bd-empty-text">L\'historique d\'appels, notes et rappels '
+            f'apparaîtra ici dès le premier contact avec {name}.</div>'
+            '</div></div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     cn1, cn2, cn3 = st.columns(3)
-    cn1.metric("Statut actuel", status)
-    cn2.metric("Dernier appel", biz.get("last_call_at") or "—")
-    cn3.metric("Date de rappel", biz.get("callback_date") or "—")
-    if biz.get("call_notes"):
-        st.info(biz['call_notes'])
+    cn1.metric("Statut", biz.get("call_status") or "À appeler")
+    cn2.metric("Dernier appel", last_call or "—")
+    cn3.metric("Rappel prévu", callback or "—")
+    if notes:
+        st.info(notes, icon=":material/sticky_note_2:")
 
 
 def render_business_card(biz: dict, key_suffix: str = "") -> None:
