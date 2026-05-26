@@ -1589,10 +1589,12 @@ def render_detail_page(biz: dict) -> None:
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    # Hauteur fixe généreuse 2400px + scrolling=True. On laisse l'utilisateur
-    # scroller dans l'iframe si besoin. L'approche auto-resize JS causait
-    # une boucle infinie (24000px+), c'est plus simple et fiable comme ça.
-    _components_html(visual_html, height=2400, scrolling=True)
+    # Hauteur initiale 2400px (gros pour couvrir le pire cas). Le JS embarqué
+    # dans l'iframe (resizeFrameToContent) ajuste à la hauteur réelle du
+    # contenu via window.frameElement → fini le gros vide blanc en bas.
+    # La boucle infinie précédente venait de min-height:100vh sur body, qui
+    # est retiré → resize stable maintenant.
+    _components_html(visual_html, height=2400, scrolling=False)
 
 
 # ===========================================================================
@@ -2527,10 +2529,49 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   // Expose globalement pour que onclick="launchAuditWithLoader(this)" marche
   window.launchAuditWithLoader = launchAuditWithLoader;
 
-  // NB : auto-resize de l'iframe RETIRÉ. L'iframe a maintenant une
-  // hauteur fixe (2400px) + scrolling=True côté Streamlit. C'est plus
-  // simple et fiable que les tentatives précédentes (ResizeObserver
-  // créait une boucle infinie qui poussait l'iframe à 24000px+).
+  // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
+  // L'iframe Streamlit a un height fixe (2400px par défaut). Le contenu
+  // fait ~1000-1500px → on l'ajuste dynamiquement pour éviter le gros vide.
+  // window.frameElement marche car l'iframe est same-origin.
+  //
+  // BOUCLE INFINIE PRÉCÉDENTE ÉLIMINÉE : la cause était min-height:100vh
+  // sur body qui faisait grandir le body quand l'iframe grandissait.
+  // Cette propriété est retirée → resize stable.
+  //
+  // GARDE-FOUS :
+  //  - lastAppliedHeight : ignore changements < 2px (bruit)
+  //  - Math.min(h, 3000) : plafond de sécurité
+  let lastAppliedHeight = 0;
+  function resizeFrameToContent() {{
+    try {{
+      const frame = window.frameElement;
+      if (!frame) return;
+      const h = Math.max(
+        document.body.scrollHeight,
+        document.documentElement.scrollHeight
+      );
+      const clamped = Math.min(h + 8, 3000);
+      if (Math.abs(clamped - lastAppliedHeight) < 2) return;
+      lastAppliedHeight = clamped;
+      frame.style.height = clamped + 'px';
+    }} catch (e) {{
+      console.error('resizeFrameToContent failed:', e);
+    }}
+  }}
+  // Initial resize après chargement complet (fonts + images)
+  if (document.readyState === 'complete') {{
+    resizeFrameToContent();
+  }} else {{
+    window.addEventListener('load', resizeFrameToContent);
+  }}
+  // Re-resize dynamique : tab switch, accordion toggle, audit loader
+  if (typeof ResizeObserver !== 'undefined') {{
+    new ResizeObserver(resizeFrameToContent).observe(document.body);
+  }}
+  // Sécurité : Google Fonts peuvent arriver en retard et changer les dims
+  setTimeout(resizeFrameToContent, 300);
+  setTimeout(resizeFrameToContent, 800);
+  setTimeout(resizeFrameToContent, 1500);
 </script>
 
 </body>
