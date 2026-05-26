@@ -2540,11 +2540,15 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   let lastAppliedHeight = 0;
   function resizeFrameToContent() {{
     try {{
-      const h = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight
-      );
-      const clamped = Math.min(h + 8, 3000);
+      // BUG FIX MAJEUR : on utilisait Math.max(body.scrollHeight,
+      // documentElement.scrollHeight) — mais documentElement.scrollHeight
+      // retourne la hauteur du VIEWPORT (= hauteur initiale de l'iframe
+      // = 2400px) quand le contenu ne déborde pas. Conséquence :
+      // Math.max(1000, 2400) = 2400 → iframe restait coincé à 2400px.
+      // Fix : utiliser body.scrollHeight (taille réelle du contenu).
+      // Aussi : on prend getBoundingClientRect().height pour précision.
+      const h = Math.ceil(document.body.getBoundingClientRect().height);
+      const clamped = Math.min(Math.max(h + 8, 50), 3000);
       if (Math.abs(clamped - lastAppliedHeight) < 2) return;
       lastAppliedHeight = clamped;
 
