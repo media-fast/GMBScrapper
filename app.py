@@ -1501,7 +1501,7 @@ def render_detail_page(biz: dict) -> None:
     #      - data-testid="stElementContainer" qui contient l'iframe
     _detail_page_css = """
 <style>
-/* ─── Trigger Streamlit caché (cliqué par JS depuis l'iframe) ──────── */
+/* ─── Trigger Streamlit caché (cliqué par JS depuis le HTML inline) ── */
 .st-key-bd-hidden-audit-run {
     position: absolute !important;
     left: -9999px !important;
@@ -1516,16 +1516,71 @@ def render_detail_page(biz: dict) -> None:
     visibility: hidden !important;
 }
 
-/* ─── Wrappers iframe : adapter au contenu (kill vide blanc) ──────── */
-.st-emotion-cache-4rsbii,
-[data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]),
-[data-testid="stElementContainer"]:has(> iframe.stIFrame) {
+/* ─── Scroll naturel sur la page détail (Streamlit a parfois overflow:hidden
+       sur certains conteneurs qui empêche de scroller toute la fiche) ── */
+html, body,
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+[data-testid="stAppViewContainer"] {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
     height: auto !important;
-    min-height: 0 !important;
     max-height: none !important;
 }
-/* L'iframe lui-même garde une hauteur (set par le JS via getBoundingClientRect),
-   ne PAS forcer height: auto sur lui (sinon collapse à 0). */
+
+/* ─── SVG icons inside .fp-detail-root : forcer display:block + dimensions
+       Sinon certains navigateurs / Streamlit globaux les rendent
+       invisibles (collapse à 0×0) ─────────────────────────────────────── */
+.fp-detail-root svg {
+    display: block !important;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+.fp-detail-root .contact-item__icon svg,
+.fp-detail-root .website-block__icon svg {
+    width: 15px !important;
+    height: 15px !important;
+}
+.fp-detail-root .eval-card__icon svg {
+    width: 16px !important;
+    height: 16px !important;
+}
+.fp-detail-root .stat-row__label svg {
+    width: 14px !important;
+    height: 14px !important;
+}
+.fp-detail-root .ext-link__icon svg {
+    width: 17px !important;
+    height: 17px !important;
+}
+.fp-detail-root .acc-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+}
+.fp-detail-root .breadcrumb svg,
+.fp-detail-root .rank-badge svg,
+.fp-detail-root .acc-chevron svg,
+.fp-detail-root .ext-link__arrow svg,
+.fp-detail-root .admins-card__title svg {
+    width: 12px !important;
+    height: 12px !important;
+}
+.fp-detail-root .admin-action svg {
+    width: 14px !important;
+    height: 14px !important;
+}
+.fp-detail-root .empty-state__icon svg {
+    width: 26px !important;
+    height: 26px !important;
+}
+.fp-detail-root .audit-cta svg {
+    width: 13px !important;
+    height: 13px !important;
+}
+.fp-detail-root .btn svg {
+    width: 15px !important;
+    height: 15px !important;
+}
 </style>"""
     try:
         st.html(_detail_page_css)
