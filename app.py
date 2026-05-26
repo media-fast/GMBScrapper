@@ -1457,9 +1457,6 @@ def show_business_details(biz: dict) -> None:
             ):
                 st.session_state[f"bd_audit_open_{safe_key}"] = True
 
-    # ─────────────── BRIEFING IA (Streamlit natif, génération côté serveur) ───
-    _render_ai_briefing_section(biz)
-
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz)
     # Hauteur fixée : l'iframe ne peut pas auto-fit son contenu. 1500px
@@ -1563,6 +1560,7 @@ def _build_detail_visual_html(biz: dict) -> str:
             score_html = f'<div class="score-panel">{rating_block}{age_block}</div>'
 
     # ─── Contact items ───
+    arrow_svg = '<span class="contact-item__action"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>'
     contact_items = []
     if phone:
         contact_items.append(f'''
@@ -1576,6 +1574,7 @@ def _build_detail_visual_html(biz: dict) -> str:
             <div class="contact-item__label">Téléphone</div>
             <div class="contact-item__value">{_safe_html(phone)}</div>
           </div>
+          {arrow_svg}
         </a>''')
     if email:
         contact_items.append(f'''
@@ -1590,6 +1589,7 @@ def _build_detail_visual_html(biz: dict) -> str:
             <div class="contact-item__label">Email</div>
             <div class="contact-item__value">{_safe_html(email)}</div>
           </div>
+          {arrow_svg}
         </a>''')
 
     website_block = ""
@@ -1611,6 +1611,14 @@ def _build_detail_visual_html(biz: dict) -> str:
             </div>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
           </a>
+          <a href="{_safe_html(website)}" target="_blank" class="audit-cta">
+            <span class="audit-cta__accent"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            Lancer l'audit SEO du site
+          </a>
         </div>'''
 
     address_block = ""
@@ -1618,8 +1626,10 @@ def _build_detail_visual_html(biz: dict) -> str:
         full_addr = _safe_html(address)
         if postal and locality and postal not in str(address):
             full_addr = f"{_safe_html(address)}, {_safe_html(postal)} {_safe_html(locality)}"
+        # Encode address for Google Maps URL
+        gmaps_query = website.replace(' ', '+') if False else _safe_html(address).replace(' ', '+')
         address_block = f'''
-        <a href="#" class="contact-item">
+        <a href="https://www.google.com/maps/search/?api=1&query={gmaps_query}" target="_blank" class="contact-item">
           <span class="contact-item__icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
@@ -1630,6 +1640,7 @@ def _build_detail_visual_html(biz: dict) -> str:
             <div class="contact-item__label">Adresse</div>
             <div class="contact-item__value">{full_addr}</div>
           </div>
+          {arrow_svg}
         </a>'''
 
     contact_list_html = (
@@ -1652,6 +1663,8 @@ def _build_detail_visual_html(biz: dict) -> str:
                 initials = (parts[0][:1] + parts[-1][:1]).upper()
             else:
                 initials = full_name[:2].upper()
+            # LinkedIn search URL
+            linkedin_query = _safe_html(full_name).replace(' ', '%20')
             rows.append(f'''
             <div class="admin-row">
               <div class="admin-avatar">{_safe_html(initials)}</div>
@@ -1659,6 +1672,12 @@ def _build_detail_visual_html(biz: dict) -> str:
                 <div class="admin-name">{_safe_html(full_name)}</div>
                 <div class="admin-role">Administrateur</div>
               </div>
+              <a href="https://www.linkedin.com/search/results/people/?keywords={linkedin_query}" target="_blank" class="admin-action" title="Rechercher sur LinkedIn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+              </a>
             </div>''')
         dirigeants_html = f'''
         <div class="card admins-card">
@@ -1889,20 +1908,24 @@ def _build_detail_visual_html(biz: dict) -> str:
   body {{
     font-family: 'Inter', system-ui, sans-serif;
     background: var(--cream); color: var(--ink-900);
-    font-size: 14px; line-height: 1.5;
+    font-size: 14px; line-height: 1.5; min-height: 100vh;
     -webkit-font-smoothing: antialiased;
-    padding: 16px;
   }}
   .serif {{ font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; }}
   .mono {{ font-family: 'JetBrains Mono', monospace; }}
 
   .action-bar {{
+    position: sticky; top: 0; z-index: 50;
     background: rgba(251, 249, 244, 0.85);
     backdrop-filter: saturate(180%) blur(20px);
-    border: 1px solid var(--ink-200); border-radius: 14px;
-    padding: 14px 22px; margin-bottom: 16px;
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 24px; flex-wrap: wrap;
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--ink-200);
+  }}
+  .action-bar__inner {{
+    max-width: 1320px; margin: 0 auto;
+    padding: 14px 32px;
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 24px; align-items: center;
   }}
   .breadcrumb {{ display: flex; align-items: center; gap: 10px; color: var(--ink-500); font-size: 13px; }}
   .breadcrumb svg {{ width: 12px; height: 12px; }}
@@ -1915,21 +1938,32 @@ def _build_detail_visual_html(biz: dict) -> str:
   .pulse-dot::before {{ content: ''; position: absolute; inset: -3px; border-radius: 999px; background: var(--amber-700); opacity: .3; animation: pulse 2s ease-out infinite; }}
   @keyframes pulse {{ 0% {{ transform: scale(.9); opacity: .4; }} 100% {{ transform: scale(1.8); opacity: 0; }} }}
 
-  .shell {{ display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }}
-  .sidebar {{ display: flex; flex-direction: column; gap: 16px; }}
+  .actions {{ display: flex; gap: 8px; }}
+  .btn {{ display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; border: none; cursor: pointer; transition: all .2s ease; white-space: nowrap; text-decoration: none; }}
+  .btn svg {{ width: 15px; height: 15px; }}
+  .btn--primary {{ background: var(--indigo-900); color: white; }}
+  .btn--primary:hover {{ background: var(--indigo-700); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(52, 37, 175, 0.3); }}
+  .btn--ghost {{ background: var(--paper); color: var(--ink-900); border: 1px solid var(--ink-200); }}
+  .btn--ghost:hover {{ border-color: var(--indigo-600); color: var(--indigo-700); }}
+  .btn--icon {{ width: 38px; padding: 0; height: 38px; justify-content: center; }}
+  .btn--call {{ background: var(--green-600); color: white; }}
+  .btn--call:hover {{ background: #0a8049; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(15, 157, 88, 0.3); }}
+
+  .shell {{ max-width: 1320px; margin: 0 auto; padding: 32px; display: grid; grid-template-columns: 380px 1fr; gap: 32px; align-items: start; }}
+  .sidebar {{ position: sticky; top: 90px; display: flex; flex-direction: column; gap: 16px; }}
   .card {{ background: var(--paper); border-radius: var(--radius-lg); border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); overflow: hidden; }}
 
-  .identity-card {{ padding: 24px 24px 20px; position: relative; }}
+  .identity-card {{ padding: 28px 28px 24px; position: relative; }}
   .identity-card::before {{ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--indigo-600), var(--indigo-500), var(--gold)); }}
-  .rank-badge {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: linear-gradient(135deg, #FFF1CC, #FFE4A3); color: #8A5A0A; border-radius: 999px; font-size: 11px; font-weight: 700; margin-bottom: 14px; }}
+  .rank-badge {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: linear-gradient(135deg, #FFF1CC, #FFE4A3); color: #8A5A0A; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 14px; }}
   .rank-badge svg {{ width: 12px; height: 12px; }}
-  .company-name {{ font-family: 'Fraunces', Georgia, serif; font-size: 26px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; color: var(--ink-900); margin-bottom: 6px; }}
+  .company-name {{ font-family: 'Fraunces', Georgia, serif; font-size: 30px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; color: var(--ink-900); margin-bottom: 6px; }}
   .company-form {{ font-size: 13px; color: var(--ink-500); margin-bottom: 18px; }}
 
   .score-panel {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; margin: 0 -8px 18px; background: linear-gradient(135deg, var(--indigo-50) 0%, #F0EDFF 100%); border-radius: 14px; }}
   .score-block {{ text-align: center; }}
   .score-block__label {{ font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo-700); margin-bottom: 6px; opacity: .8; }}
-  .score-block__value {{ font-family: 'Fraunces', serif; font-size: 24px; font-weight: 600; color: var(--indigo-900); letter-spacing: -0.02em; display: flex; align-items: baseline; justify-content: center; gap: 3px; }}
+  .score-block__value {{ font-family: 'Fraunces', serif; font-size: 26px; font-weight: 600; color: var(--indigo-900); letter-spacing: -0.02em; display: flex; align-items: baseline; justify-content: center; gap: 3px; }}
   .score-block__value small {{ font-size: 13px; color: var(--ink-500); font-weight: 500; }}
   .reviews-count {{ font-size: 11px; color: var(--ink-500); margin-top: 2px; }}
   .stars {{ color: var(--gold); letter-spacing: 1px; font-size: 12px; }}
@@ -1943,15 +1977,21 @@ def _build_detail_visual_html(biz: dict) -> str:
   .contact-item__main {{ flex: 1; min-width: 0; }}
   .contact-item__label {{ font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); margin-bottom: 1px; }}
   .contact-item__value {{ color: var(--ink-900); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .contact-item__action {{ color: var(--ink-400); opacity: 0; transition: opacity .2s; }}
+  .contact-item:hover .contact-item__action {{ opacity: 1; }}
 
   .website-block {{ padding: 14px 0; border-bottom: 1px solid var(--ink-100); }}
-  .website-block__main {{ display: flex; align-items: center; gap: 12px; color: var(--ink-700); text-decoration: none; }}
+  .website-block__main {{ display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--ink-700); text-decoration: none; transition: color .15s; }}
   .website-block__main:hover {{ color: var(--indigo-700); }}
   .website-block__icon {{ width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: var(--indigo-50); color: var(--indigo-700); display: grid; place-items: center; }}
   .website-block__icon svg {{ width: 15px; height: 15px; }}
   .website-block__info {{ flex: 1; min-width: 0; }}
   .website-block__label {{ font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); margin-bottom: 1px; }}
   .website-block__url {{ color: var(--ink-900); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .audit-cta {{ display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; background: var(--indigo-900); color: white; border: none; border-radius: 9px; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all .2s; width: 100%; justify-content: center; }}
+  .audit-cta:hover {{ background: var(--indigo-700); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(52, 37, 175, 0.25); }}
+  .audit-cta svg {{ width: 13px; height: 13px; }}
+  .audit-cta__accent {{ width: 6px; height: 6px; border-radius: 999px; background: var(--gold); box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.25); }}
 
   .admins-card {{ padding: 20px 24px; }}
   .admins-card__title {{ display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--indigo-700); margin-bottom: 14px; }}
@@ -1962,8 +2002,11 @@ def _build_detail_visual_html(biz: dict) -> str:
   .admin-info {{ flex: 1; min-width: 0; }}
   .admin-name {{ font-size: 13.5px; font-weight: 600; color: var(--ink-900); margin-bottom: 1px; }}
   .admin-role {{ font-size: 11px; color: var(--ink-500); }}
+  .admin-action {{ color: var(--ink-400); background: transparent; border: none; padding: 6px; cursor: pointer; border-radius: 6px; transition: all .15s; }}
+  .admin-action:hover {{ color: var(--indigo-700); background: var(--indigo-50); }}
+  .admin-action svg {{ width: 14px; height: 14px; display: block; }}
 
-  .ai-footer {{ padding: 14px 24px; background: var(--indigo-50); border-top: 1px solid var(--ink-100); display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--ink-500); }}
+  .ai-footer {{ padding: 14px 28px; background: var(--indigo-50); border-top: 1px solid var(--ink-100); display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--ink-500); }}
   .ai-dot {{ width: 6px; height: 6px; border-radius: 999px; background: var(--indigo-600); box-shadow: 0 0 0 3px var(--indigo-100); }}
 
   .main {{ display: flex; flex-direction: column; gap: 20px; min-width: 0; }}
@@ -1972,6 +2015,8 @@ def _build_detail_visual_html(biz: dict) -> str:
   .tab svg {{ width: 15px; height: 15px; }}
   .tab:hover {{ color: var(--ink-900); }}
   .tab.is-active {{ background: var(--indigo-900); color: white; }}
+  .tab-badge {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; background: var(--indigo-100); color: var(--indigo-700); border-radius: 999px; font-size: 10px; font-weight: 700; }}
+  .tab.is-active .tab-badge {{ background: rgba(255,255,255,0.2); color: white; }}
 
   .panel {{ display: none; flex-direction: column; gap: 16px; }}
   .panel.is-active {{ display: flex; }}
@@ -1979,8 +2024,11 @@ def _build_detail_visual_html(biz: dict) -> str:
   .accordion {{ background: var(--paper); border-radius: var(--radius-lg); border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); overflow: hidden; }}
   .acc-header {{ width: 100%; padding: 20px 24px; background: transparent; border: none; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 14px; font-family: inherit; transition: background .15s; }}
   .acc-header:hover {{ background: var(--cream); }}
-  .acc-icon {{ width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex-shrink: 0; background: var(--indigo-50); color: var(--indigo-700); }}
+  .acc-icon {{ width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex-shrink: 0; }}
   .acc-icon svg {{ width: 18px; height: 18px; }}
+  .acc-icon--indigo {{ background: var(--indigo-50); color: var(--indigo-700); }}
+  .acc-icon--gold {{ background: var(--amber-50); color: var(--amber-700); }}
+  .acc-icon--green {{ background: var(--green-50); color: var(--green-600); }}
   .acc-titles {{ flex: 1; min-width: 0; }}
   .acc-title {{ font-size: 15px; font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }}
   .acc-subtitle {{ font-size: 12px; color: var(--ink-500); }}
@@ -2024,45 +2072,61 @@ def _build_detail_visual_html(biz: dict) -> str:
   .stat-row__label svg {{ width: 14px; height: 14px; color: var(--ink-400); }}
   .stat-row__value {{ font-size: 13px; font-weight: 600; color: var(--ink-900); }}
 
-  .empty-state {{ text-align: center; padding: 50px 30px; color: var(--ink-500); }}
+  .empty-state {{ text-align: center; padding: 60px 30px; color: var(--ink-500); }}
   .empty-state__icon {{ width: 60px; height: 60px; margin: 0 auto 16px; background: var(--indigo-50); color: var(--indigo-700); border-radius: 18px; display: grid; place-items: center; }}
   .empty-state__icon svg {{ width: 26px; height: 26px; }}
   .empty-state__title {{ font-family: 'Fraunces', serif; font-size: 18px; color: var(--ink-900); margin-bottom: 6px; }}
   .empty-state__text {{ font-size: 13px; max-width: 320px; margin: 0 auto; }}
   .status-pill {{ display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; background: var(--indigo-100); color: var(--indigo-700); border-radius: 999px; font-size: 11px; font-weight: 600; }}
 
-  @media (max-width: 900px) {{
+  @media (max-width: 1100px) {{
     .shell {{ grid-template-columns: 1fr; }}
-    .eval-grid {{ grid-template-columns: 1fr; }}
+    .sidebar {{ position: static; }}
+    .action-bar__inner {{ grid-template-columns: 1fr; gap: 12px; }}
+    .tracking-strip {{ overflow-x: auto; }}
+  }}
+  @media (max-width: 640px) {{
+    .shell {{ padding: 16px; gap: 16px; }}
+    .action-bar__inner {{ padding: 12px 16px; }}
     .data-grid {{ grid-template-columns: 1fr; }}
+    .eval-grid {{ grid-template-columns: 1fr; }}
+    .company-name {{ font-size: 24px; }}
   }}
 </style>
 </head>
 <body>
 
 <div class="action-bar">
-  <div class="breadcrumb">
-    <span>Prospects</span>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-    <span>{city}</span>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-    <span style="color: var(--ink-900); font-weight: 500;">{name}</span>
-  </div>
-  <div class="tracking-strip">
-    <div class="tracking-cell">
-      <span class="tracking-cell__label">Statut</span>
-      <span class="tracking-cell__value">
-        <span class="pulse-dot" style="background: {pulse_color};"></span>
-        {_safe_html(status)}
-      </span>
+  <div class="action-bar__inner">
+    <div class="breadcrumb">
+      <span>Prospects</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      <span>{city}</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      <span style="color: var(--ink-900); font-weight: 500;">{name}</span>
     </div>
-    <div class="tracking-cell">
-      <span class="tracking-cell__label">Dernier appel</span>
-      <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("last_call_at") or "—")}</span>
+
+    <div class="tracking-strip">
+      <div class="tracking-cell">
+        <span class="tracking-cell__label">Statut</span>
+        <span class="tracking-cell__value">
+          <span class="pulse-dot" style="background: {pulse_color};"></span>
+          {_safe_html(status)}
+        </span>
+      </div>
+      <div class="tracking-cell">
+        <span class="tracking-cell__label">Dernier appel</span>
+        <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("last_call_at") or "—")}</span>
+      </div>
+      <div class="tracking-cell">
+        <span class="tracking-cell__label">Rappel</span>
+        <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("callback_date") or "—")}</span>
+      </div>
     </div>
-    <div class="tracking-cell">
-      <span class="tracking-cell__label">Rappel</span>
-      <span class="tracking-cell__value" style="color: var(--ink-400);">{_safe_html(biz.get("callback_date") or "—")}</span>
+
+    <div class="actions">
+      {f'<a href="tel:{_safe_html(phone)}" class="btn btn--call" title="Appeler maintenant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>Appeler</a>' if phone else ''}
+      <button class="btn btn--ghost btn--icon" title="Plus d&#39;actions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
     </div>
   </div>
 </div>
@@ -2162,7 +2226,7 @@ def _build_detail_visual_html(biz: dict) -> str:
     <section class="panel" id="panel-identite">
       <div class="accordion is-open">
         <button class="acc-header" aria-expanded="true">
-          <span class="acc-icon">
+          <span class="acc-icon acc-icon--indigo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>
           </span>
           <div class="acc-titles">
@@ -2176,7 +2240,7 @@ def _build_detail_visual_html(biz: dict) -> str:
 
       {f'''<div class="accordion is-open">
         <button class="acc-header" aria-expanded="true">
-          <span class="acc-icon">
+          <span class="acc-icon acc-icon--indigo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
           </span>
           <div class="acc-titles">
