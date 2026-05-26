@@ -1382,7 +1382,9 @@ def show_business_details(biz: dict) -> None:
       - Shell 2 colonnes : sidebar 380px (identity + score + contact + dirigeants)
         + main avec 3 tabs (Évaluation / Identité légale / Historique)
     """
-    _inject_business_detail_styles()
+    # NB : le CSS est injecté au niveau page (juste après _init_state()),
+    # pas ici — sinon il serait scopé au DOM de la colonne du bouton cliqué
+    # et disparaîtrait au prochain clic sur une autre fiche.
     _render_action_bar(biz)
     _render_action_row(biz)
 
@@ -1858,17 +1860,11 @@ _BUSINESS_DETAIL_CSS = """
 """
 
 
-def _inject_business_detail_styles() -> None:
-    """Injecte le CSS premium à CHAQUE rerun.
-
-    Bug évité : si on cache via st.session_state, l'élément <style> du
-    run précédent est retiré du DOM par Streamlit (les widgets non-re-rendus
-    sont nettoyés). Au 2e clic « Détails » sur une autre fiche, le HTML
-    s'afficherait sans aucun style. Re-injecter à chaque rerun est sans
-    impact perf (~6 Ko gzippés) et garantit que les styles sont toujours
-    présents tant qu'on regarde une fiche détail.
-    """
-    st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
+# NB : _BUSINESS_DETAIL_CSS est injecté au NIVEAU PAGE (top-level, après
+# _init_state()) plutôt que dans show_business_details(). Raison :
+# st.markdown('<style>') placé dans une colonne Streamlit est scopé au DOM
+# de cette colonne — au prochain rerun (clic sur une autre fiche), la
+# colonne disparaît et le style avec elle. Page-level = permanent.
 
 
 # ===========================================================================
@@ -2638,6 +2634,18 @@ def _init_state():
 
 
 _init_state()
+
+# ===========================================================================
+# CSS premium fiche détail — injecté AU NIVEAU PAGE (pas dans une colonne)
+# ===========================================================================
+# Le CSS DOIT être injecté à ce niveau (top-level) et PAS dans
+# show_business_details() — sinon il finit scopé au DOM de la colonne du
+# bouton « Détails » qui a été cliqué, et disparaît au prochain clic sur
+# une autre fiche.
+#
+# Conséquence : les overrides Streamlit (tabs/expanders) s'appliquent
+# globalement à toute l'app, ce qui est volontaire (design system cohérent).
+st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
 
 
 # ===========================================================================
