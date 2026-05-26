@@ -1592,14 +1592,24 @@ def render_detail_page(biz: dict) -> None:
                 res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 cached_audit = res  # reflet immédiat dans le rendu courant
 
-    # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
+    # ─────────────── FICHE VISUELLE INLINE (pas d'iframe) ────────────────
+    # On utilise st.html() qui injecte le HTML directement dans le DOM
+    # Streamlit (même document, PAS d'iframe). Fini les problèmes :
+    #   - hauteur fixe / boucle de resize / wrapper qui ne s'adapte pas
+    #   - bridge JS entre iframe et parent
+    #   - warning « st.components.v1.html will be removed »
+    #
+    # Le HTML s'adapte naturellement à son contenu (pas de hauteur fixe).
+    # Trade-off : <script> ne s'exécutent pas via st.html (innerHTML
+    # security). On remplace :
+    #   - Tabs JS → CSS-only avec radio button trick
+    #   - Accordéons JS → <details>/<summary> natif HTML
+    #   - audit-cta onclick → inline onclick (qui MARCHE via innerHTML)
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    # Hauteur initiale 2400px (large pour couvrir tous les cas). Le JS
-    # resizeFrameToContent l'ajuste à la hauteur réelle (mesurée via
-    # Math.max(body.scrollHeight, getBoundingClientRect, shell.bottom)).
-    # scrolling=True en filet de sécurité : si le JS sous-estime, l'user
-    # peut scroller dans l'iframe pour voir tout le contenu.
-    _components_html(visual_html, height=2400, scrolling=True)
+    try:
+        st.html(visual_html)
+    except AttributeError:
+        st.markdown(visual_html, unsafe_allow_html=True)
 
 
 # ===========================================================================
@@ -1643,6 +1653,246 @@ def _build_audit_summary_compact_html(audit: dict) -> str:
           </div>
           {f'<div style="margin-top: 6px; font-size: 10px; color: var(--ink-400);">Généré le {_safe_html(ts)}</div>' if ts else ''}
         </div>'''
+
+
+def _scope_css_rules(css: str, scope: str) -> str:
+    """Préfixe toutes les règles CSS avec un scope (ex. `.fp-detail-root`).
+
+    Skip les @-rules (@keyframes, @media, @import, @supports) et les
+    sélecteurs déjà préfixés. Préserve les @keyframes percentages (0%, 50%)
+    intacts car ce ne sont pas des sélecteurs de bloc.
+    """
+    import re as _re
+    chunks = css.split('}')
+    out = []
+    inside_at_rule = False
+    at_rule_depth = 0
+    for chunk in chunks:
+        # Détecter si on entre dans un @-rule (keyframes, media)
+        opens = chunk.count('{')
+        if '@' in chunk and ('@keyframes' in chunk or '@media' in chunk or '@supports' in chunk):
+            at_rule_depth += opens
+            inside_at_rule = True
+            out.append(chunk)
+            continue
+        if inside_at_rule:
+            at_rule_depth -= 1
+            if at_rule_depth <= 0:
+                inside_at_rule = False
+            out.append(chunk)
+            continue
+        if '{' not in chunk:
+            out.append(chunk)
+            continue
+        idx = chunk.rfind('{')
+        sel = chunk[:idx]
+        body = chunk[idx:]
+        sel_stripped = sel.strip()
+        if not sel_stripped or sel_stripped.startswith('@') or sel_stripped.startswith('/*'):
+            out.append(chunk)
+            continue
+        # Split selector list par virgule, préfixer chaque
+        parts = [p.strip() for p in sel.split(',')]
+        new_parts = []
+        for p in parts:
+            if not p:
+                new_parts.append(p)
+                continue
+            if p.startswith(scope):
+                new_parts.append(p)
+                continue
+            # Cas spéciaux qu'on convertit en sélecteur sur le scope
+            if p in ('*', 'html', 'body', ':root'):
+                if p == 'body' or p == ':root':
+                    # 'body' / ':root' deviennent le scope lui-même
+                    new_parts.append(scope)
+                elif p == '*':
+                    # '*' devient '.scope *' (descendants seulement)
+                    new_parts.append(f'{scope} *')
+                else:
+                    new_parts.append(p)
+                continue
+            new_parts.append(f'{scope} {p}')
+        # Préserver indentation (premiers espaces du sel originel)
+        leading = sel[:len(sel) - len(sel.lstrip())]
+        new_sel = ', '.join(new_parts)
+        out.append(leading + new_sel + body)
+    return '}'.join(out)
+
+
+def _iframe_html_to_inline(iframe_html: str, scope_class: str = 'fp-detail-root') -> str:
+    """Convertit le HTML iframe (DOCTYPE/html/head/body) en HTML inline
+    pour st.html().
+
+    Transformations :
+      1. Strip <!DOCTYPE>, <html>, <head>, <body> wrappers
+      2. Extract <style> + scope sous .scope_class
+      3. Remove <script> blocks (n'exécuteraient pas via innerHTML)
+      4. <div class="accordion is-open"> → <details class="accordion" open>
+         + <button class="acc-header"> → <summary class="acc-header">
+         + Remove .acc-body wrapper (laissé <div class="acc-body-inner">
+           direct enfant de <details>)
+      5. Replace tabs JS-driven by CSS-only radio inputs
+      6. Replace launchAuditWithLoader(this) onclick par inline JS
+      7. Replace window.parent.document.querySelector par juste document
+         (même DOM)
+      8. Wrap dans <div class="scope_class">
+    """
+    import re as _re
+
+    # 1. Extract <style>...</style>
+    style_match = _re.search(r'<style>(.+?)</style>', iframe_html, _re.DOTALL)
+    css = style_match.group(1) if style_match else ''
+
+    # 2. Extract <body>...</body>
+    body_match = _re.search(r'<body>(.+?)</body>', iframe_html, _re.DOTALL)
+    body = body_match.group(1) if body_match else iframe_html
+
+    # 3. Strip <script>...</script>
+    body = _re.sub(r'<script>.+?</script>', '', body, flags=_re.DOTALL)
+
+    # 4. Accordion divs → details
+    # <div class="accordion is-open"> → <details class="accordion" open>
+    body = _re.sub(
+        r'<div class="accordion is-open">',
+        '<details class="accordion" open>',
+        body,
+    )
+    body = _re.sub(r'<div class="accordion">', '<details class="accordion">', body)
+    # Closing </div> du wrapper accordion → </details>
+    # Note : on cherche les </div> qui ferment exactement le bloc accordion.
+    # Approche simple : compter les acc-header (= chaque accordion en a 1)
+    # et remplacer le </div> orphelin à la fin de chaque accordion. Trop
+    # complexe sans parser HTML proprement. À la place, on convertit
+    # <button class="acc-header"> → <summary class="acc-header"> et son
+    # </button> → </summary>, puis on laisse les </div> tels quels (details
+    # accepte des divs enfants).
+    body = body.replace('<button class="acc-header" aria-expanded="true">',
+                        '<summary class="acc-header">')
+    body = body.replace('<button class="acc-header" aria-expanded="false">',
+                        '<summary class="acc-header">')
+    body = _re.sub(r'(<summary class="acc-header">.+?)</button>',
+                   r'\1</summary>', body, flags=_re.DOTALL)
+    # Et on doit fermer les <details> à la place du dernier </div> de chaque
+    # accordion. Le pattern est : <details ...>...</div>  </div>
+    # Le dernier </div> ferme le <div class="accordion ...">.
+    # Approche : remplacer le pattern ouvrant/fermant en mode global.
+    # Simple : split par <details et reconstruire en cherchant le bon </div>.
+    # → Plus simple : remplacer dans tout le body. Chaque <details ...> doit
+    # finir par </details>. On remplace UNIQUEMENT le </div> qui suit
+    # immédiatement la fin du contenu de l'accordion (le dernier avant le
+    # prochain accordion ou la fin du panel).
+    # Workaround : on suppose que chaque accordion finit par
+    # `</div></div>\n      </div>` (acc-body + acc-body-inner + accordion).
+    # On remplace le 3e </div> par </details>. C'est fragile mais marche
+    # avec notre structure connue. Alternative : remplacer
+    # `</div>\n      </div>` par `</div>\n      </details>` au sein du
+    # bloc accordion.
+    # FIX SIMPLE : juste rajouter </details> à la fin des <details> ouverts
+    # en post-process. Compter les <details> et appender autant de </details>
+    # n'est pas correct car ils sont à l'intérieur. On va plutôt remplacer
+    # le </div> qui SUIT </div></div> par </details> uniquement quand on est
+    # à l'intérieur d'un panel d'identité.
+    # Hack simple : remplacer dans la section identité légale.
+    # On déconstruit en sachant que chaque accordion est dans panel-identite.
+    # → On va parser plus précisément. Trouver chaque <details ... open>
+    # et fermer correctement.
+    def _close_details(html_section):
+        # Compte les <details et </details. Tant que les <details n'ont pas
+        # leur </details, on ferme avec </details au prochain </div seul.
+        # Simplification : utiliser un parseur HTML léger.
+        # Pour notre cas, structure connue : <details ...>...<div ...><div ...>...</div>...</div></div>
+        # Le DERNIER </div> du bloc ferme le <details>. On remplace via regex
+        # qui cherche `<details ... open>...?</div>\\s*</div>\\s*</div>` et
+        # remplace le dernier </div> par </details>.
+        return _re.sub(
+            r'(<details class="accordion"(?:\s+open)?>.+?</div>\s*</div>\s*)</div>',
+            r'\1</details>',
+            html_section,
+            flags=_re.DOTALL,
+        )
+    body = _close_details(body)
+
+    # 5. Tabs JS-driven → CSS-only radio buttons
+    # Insère les radio inputs au tout début du body (siblings de .shell)
+    radio_inputs = (
+        '<input type="radio" name="fp-tabs" id="fp-tab-evaluation" checked class="fp-tab-input">'
+        '<input type="radio" name="fp-tabs" id="fp-tab-identite" class="fp-tab-input">'
+        '<input type="radio" name="fp-tabs" id="fp-tab-historique" class="fp-tab-input">'
+    )
+    # Replace <button class="tab is-active" data-panel="X"> → <label for="fp-tab-X" class="tab">
+    body = _re.sub(
+        r'<button class="tab is-active" data-panel="(\w+)" role="tab">',
+        lambda m: f'<label for="fp-tab-{m.group(1)}" class="tab">',
+        body,
+    )
+    body = _re.sub(
+        r'<button class="tab" data-panel="(\w+)" role="tab">',
+        lambda m: f'<label for="fp-tab-{m.group(1)}" class="tab">',
+        body,
+    )
+    body = body.replace('</button>', '</label>')
+    # Ajoute les radios au début (juste après le wrapper)
+    body = radio_inputs + body
+
+    # 6. Audit-cta : remplacer onclick=launchAuditWithLoader(this) par
+    # un onclick inline qui fait tout dans une expression.
+    # Note : on utilise document.querySelector (pas window.parent) car
+    # même DOM maintenant.
+    inline_audit_onclick = (
+        "this.disabled=true;"
+        "this.innerHTML='<div class=\\'audit-spinner\\'></div><span>Génération en cours…</span>';"
+        "var bl=this.closest('.website-block');"
+        "if(bl&&!bl.querySelector('.audit-loading-placeholder')){"
+        "var ph=document.createElement('div');"
+        "ph.className='audit-loading-placeholder';"
+        "ph.innerHTML='<div class=\\'audit-spinner\\'></div>"
+        "<div class=\\'audit-loading-placeholder__text\\'>"
+        "<div class=\\'audit-loading-placeholder__title\\'>Audit SEO en cours…</div>"
+        "<div class=\\'audit-loading-placeholder__sub\\'>"
+        "Analyse du site web et de Google Business (~3 s)</div></div>';"
+        "bl.appendChild(ph);"
+        "}"
+        "var pb=document.querySelector('.st-key-bd-hidden-audit-run button');"
+        "if(pb)pb.click();"
+    )
+    body = body.replace(
+        'onclick="launchAuditWithLoader(this)"',
+        f'onclick="{inline_audit_onclick}"',
+    )
+
+    # 7. CSS additions pour radio tabs + retrait des règles obsolètes
+    extra_css = """
+    /* Radio tabs (CSS-only navigation) */
+    .fp-tab-input { display: none; }
+    /* Tab labels look like buttons */
+    .tabs label.tab { cursor: pointer; }
+    /* Panel visibility piloté par radio :checked */
+    .panel { display: none; }
+    #fp-tab-evaluation:checked ~ .shell .panel#panel-evaluation,
+    #fp-tab-identite:checked ~ .shell .panel#panel-identite,
+    #fp-tab-historique:checked ~ .shell .panel#panel-historique { display: flex; }
+    /* Tab actif : background indigo-900 */
+    #fp-tab-evaluation:checked ~ .shell label[for="fp-tab-evaluation"],
+    #fp-tab-identite:checked ~ .shell label[for="fp-tab-identite"],
+    #fp-tab-historique:checked ~ .shell label[for="fp-tab-historique"] {
+      background: var(--indigo-900); color: white;
+    }
+    /* Details native = remplace .accordion.is-open .acc-chevron rotation */
+    details.accordion[open] .acc-chevron { transform: rotate(180deg); background: var(--indigo-100); color: var(--indigo-700); }
+    /* Details body : pas besoin de max-height (browser gère show/hide) */
+    details.accordion .acc-body, details.accordion summary + .acc-body-inner { max-height: none; }
+    /* Cache le marker default des <details> */
+    details.accordion summary { list-style: none; cursor: pointer; }
+    details.accordion summary::-webkit-details-marker { display: none; }
+    """
+    css = css + extra_css
+
+    # 8. Scope all CSS rules under .scope_class
+    scoped_css = _scope_css_rules(css, f'.{scope_class}')
+
+    # 9. Wrap in scoped div
+    return f'<div class="{scope_class}"><style>{scoped_css}</style>{body}</div>'
 
 
 def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> str:
@@ -2069,7 +2319,11 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     # NOTE : CSS DIRECTEMENT issu de fiche-entreprise.html (la maquette).
     # Pas de modifications, pas de préfixes, pas de !important — l'iframe
     # garantit l'isolation complète.
-    return f"""<!DOCTYPE html>
+    # Le return ci-dessous construit le HTML iframe-style (DOCTYPE+html+head+body).
+    # On le transforme ensuite en HTML inline scopé via _iframe_html_to_inline() :
+    # strip wrappers, scope CSS sous .fp-detail-root, convertit accordions en
+    # <details>, tabs en CSS-only radio, audit-cta en inline onclick, retire script.
+    _iframe_html_string = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
@@ -2621,6 +2875,8 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
 
 </body>
 </html>"""
+    # Convertit le HTML iframe-style → inline pour st.html() (sans iframe)
+    return _iframe_html_to_inline(_iframe_html_string)
 
 
 # ===========================================================================
