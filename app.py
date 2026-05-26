@@ -4488,46 +4488,53 @@ with st.container(border=True):
         else:
             st.caption("Choisis une ville centrale pour calculer le rayon.")
 
-    # --- PARAMÈTRES (3 cards) ---
+    # --- PARAMÈTRES AVANCÉS (3 cards + options techniques) ---
+    # Tout est replié par défaut dans l'expander pour garder le formulaire
+    # principal minimaliste (uniquement Métiers + Zone). L'utilisateur
+    # n'ouvre les paramètres avancés que s'il veut customiser.
     st.markdown("")
-    p1, p2, p3 = st.columns(3)
-
-    with p1:
-        with st.container(border=True):
-            st.markdown("**Enrichissement TVA**")
-            do_vat = st.toggle("Activer l'enrichissement TVA", value=True, key="t_vat")
-            st.caption("Sources :")
-            do_website_vat = st.checkbox("Site web (mentions légales)",
-                                          value=True, disabled=not do_vat, key="cb_web_vat")
-            do_kbo = st.checkbox("Registre KBO / BCE",
-                                  value=True, disabled=not do_vat, key="cb_kbo")
-            do_bce = st.checkbox("Détail BCE (dirigeants, NACE)",
-                                  value=True, disabled=not do_vat, key="cb_bce")
-
-    with p2:
-        with st.container(border=True):
-            st.markdown("**Qualité des fiches**")
-            strict_city = st.toggle("Filtrage strict par ville", value=True,
-                                    help="Élimine les fiches hors de la ville recherchée.")
-            exclude_seen = st.toggle("Exclure entreprises déjà trouvées", value=True,
-                                      help="Ignore les fiches déjà présentes dans l'historique.")
-            require_phone = st.checkbox("Téléphone obligatoire", value=False,
-                                         help="N'inclut que les fiches avec un numéro.")
-
-    with p3:
-        with st.container(border=True):
-            st.markdown("**Volumes & enrichissements**")
-            unlimited = st.toggle("Tout récupérer (sans limite)", value=False,
-                                  help="Scrape jusqu'à ce que Google Maps n'en montre plus.")
-            if unlimited:
-                max_per_city = 500
-                st.caption("Limite Google ~120/commune")
-            else:
-                max_per_city = st.slider("Max par commune", 5, 100, 20, 5)
-            do_fin = st.toggle("Données financières (BNB, CompanyWeb)", value=True)
-
-    # --- AVANCÉ ---
     with st.expander("Paramètres avancés"):
+        p1, p2, p3 = st.columns(3)
+
+        with p1:
+            with st.container(border=True):
+                st.markdown("**Enrichissement TVA**")
+                do_vat = st.toggle("Activer l'enrichissement TVA", value=True, key="t_vat")
+                st.caption("Sources :")
+                do_website_vat = st.checkbox("Site web (mentions légales)",
+                                              value=True, disabled=not do_vat, key="cb_web_vat")
+                do_kbo = st.checkbox("Registre KBO / BCE",
+                                      value=True, disabled=not do_vat, key="cb_kbo")
+                do_bce = st.checkbox("Détail BCE (dirigeants, NACE)",
+                                      value=True, disabled=not do_vat, key="cb_bce")
+
+        with p2:
+            with st.container(border=True):
+                st.markdown("**Qualité des fiches**")
+                strict_city = st.toggle("Filtrage strict par ville", value=True,
+                                        help="Élimine les fiches hors de la ville recherchée.")
+                exclude_seen = st.toggle("Exclure entreprises déjà trouvées", value=True,
+                                          help="Ignore les fiches déjà présentes dans l'historique.")
+                require_phone = st.checkbox("Téléphone obligatoire", value=False,
+                                             help="N'inclut que les fiches avec un numéro.")
+
+        with p3:
+            with st.container(border=True):
+                st.markdown("**Volumes & enrichissements**")
+                # Par défaut : "Tout récupérer" coché (rendement maximum
+                # pour la prospection — la majorité des users veut ça)
+                unlimited = st.toggle("Tout récupérer (sans limite)", value=True,
+                                      help="Scrape jusqu'à ce que Google Maps n'en montre plus.")
+                if unlimited:
+                    max_per_city = 500
+                    st.caption("Limite Google ~120/commune")
+                else:
+                    max_per_city = st.slider("Max par commune", 5, 100, 20, 5)
+                do_fin = st.toggle("Données financières (BNB, CompanyWeb)", value=True)
+
+        # --- Options techniques (sous-section finale dans l'expander) ---
+        st.markdown("")
+        st.markdown("**Options techniques**")
         a1, a2 = st.columns(2)
         with a1:
             headless = st.checkbox("Navigateur invisible (headless)", value=True)
