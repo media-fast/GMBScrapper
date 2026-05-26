@@ -1411,10 +1411,12 @@ def show_business_details(biz: dict) -> None:
 # ===========================================================================
 
 _BUSINESS_DETAIL_CSS = """
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* Google Fonts via @import (les <link> ne sont pas whitelistés par le
+   sanitizer Markdown de Streamlit — toute la balise <link> ferait
+   échouer le rendu et le CSS serait affiché en texte brut). */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 .bd-root {
   --bd-indigo-900: #1A0E5C;
   --bd-indigo-700: #3425AF;
@@ -2643,9 +2645,17 @@ _init_state()
 # bouton « Détails » qui a été cliqué, et disparaît au prochain clic sur
 # une autre fiche.
 #
+# On utilise st.html() (et pas st.markdown) car le sanitizer de markdown
+# escape certaines balises (notamment <link>) et finit par afficher le
+# CSS en texte brut. st.html() injecte le HTML tel quel.
+#
 # Conséquence : les overrides Streamlit (tabs/expanders) s'appliquent
 # globalement à toute l'app, ce qui est volontaire (design system cohérent).
-st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
+try:
+    st.html(_BUSINESS_DETAIL_CSS)
+except AttributeError:
+    # Fallback pour Streamlit < 1.33 qui n'a pas encore st.html()
+    st.markdown(_BUSINESS_DETAIL_CSS, unsafe_allow_html=True)
 
 
 # ===========================================================================
