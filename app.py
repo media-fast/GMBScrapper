@@ -1388,6 +1388,52 @@ def _render_seo_audit_section(biz: dict) -> None:
                             unsafe_allow_html=True)
 
 
+def _render_audit_seo_block(biz: dict, safe_key: str) -> None:
+    """Bloc audit SEO sous l'iframe : bouton stylé + résultats inline en dessous.
+
+    Layout : un bouton « Lancer l'audit SEO du site » indigo-900 (style
+    audit-cta de la maquette) suivi des résultats juste en dessous quand
+    l'audit est généré ou en cache.
+    """
+    dedup = biz.get("dedup_key")
+    cached = get_seo_audit(dedup) if dedup else None
+
+    # Header de section pour une présentation claire et organisée
+    st.markdown(
+        '<div style="margin-top: 0.8rem; margin-bottom: 0.8rem; '
+        'padding: 0 0.2rem; display: flex; align-items: center; gap: 8px;">'
+        '<div style="width: 6px; height: 6px; border-radius: 999px; '
+        'background: #E8A838; box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.25);"></div>'
+        '<div style="font-size: 0.78rem; font-weight: 700; '
+        'letter-spacing: 0.08em; text-transform: uppercase; '
+        'color: #3425AF;">Audit SEO du site web</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Bouton stylé qui matche l'audit-cta de la maquette (indigo-900 + dot or).
+    # Scopé via st.container(key="bd-audit-cta") pour la CSS ciblée
+    # (.st-key-bd-audit-cta dans _BUSINESS_DETAIL_CSS).
+    with st.container(key="bd-audit-cta"):
+        button_label = ("Régénérer l'audit SEO" if cached
+                        else "Lancer l'audit SEO du site")
+        if st.button(button_label, key=f"bd_run_audit_{safe_key}",
+                     width="stretch", type="primary"):
+            with st.spinner("Audit SEO + Google Business en cours… (~3 s)"):
+                res = run_full_audit(biz)
+            save_seo_audit(dedup, res)
+            res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            cached = res  # Affichage immédiat
+            st.rerun()  # Rafraîchit pour montrer les résultats en bas
+
+    # Affichage des résultats juste sous le bouton (organisé, cohérent).
+    if cached:
+        st.markdown(
+            _render_audit_card(cached, cached.get("_generated_at")),
+            unsafe_allow_html=True,
+        )
+
+
 @st.dialog("Détails de l'entreprise", width="large")
 def show_business_details(biz: dict) -> None:
     """Vue détaillée premium d'une fiche prospect (design Oui Allo).
@@ -1414,8 +1460,10 @@ def show_business_details(biz: dict) -> None:
     website = biz.get("website")
 
     # ─────────────── ACTION ROW NATIVE (au-dessus de l'iframe) ───────────────
-    # Trois actions principales : Appeler / Changer statut / Lancer audit SEO
-    a1, a2, a3 = st.columns([2, 2, 2])
+    # Deux actions principales : Appeler (Ringover) + Changer statut.
+    # L'audit SEO est rendu DESSOUS l'iframe (voir plus bas) pour que les
+    # résultats apparaissent juste après le bouton, comme demandé.
+    a1, a2 = st.columns([1, 2])
     with a1:
         disabled = not phone or not is_configured()
         if st.button(
@@ -1449,14 +1497,6 @@ def show_business_details(biz: dict) -> None:
             label_visibility="collapsed",
         )
 
-    with a3:
-        if website:
-            if st.button(
-                ":material/search: Lancer l'audit SEO",
-                key=f"bd_audit_{safe_key}", width="stretch",
-            ):
-                st.session_state[f"bd_audit_open_{safe_key}"] = True
-
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz)
     # Hauteur fixée : l'iframe ne peut pas auto-fit son contenu. 1500px
@@ -1464,10 +1504,12 @@ def show_business_details(biz: dict) -> None:
     # + 3 onglets full content). scrolling=True au cas où.
     _components_html(visual_html, height=1500, scrolling=True)
 
-    # ─────────────── RÉSULTATS AUDIT SEO (Streamlit natif, après l'iframe) ───
-    if st.session_state.get(f"bd_audit_open_{safe_key}"):
-        with st.expander("Résultats audit SEO", expanded=True):
-            _render_seo_audit_section(biz)
+    # ─────────────── AUDIT SEO : bouton + résultats inline en dessous ──────
+    # Section dédiée immédiatement sous l'iframe, organisée et cohérente :
+    # bouton stylé en haut, résultats s'affichent juste dessous quand
+    # l'audit est généré (cache ou via clic).
+    if website:
+        _render_audit_seo_block(biz, safe_key)
 
 
 # ===========================================================================
@@ -1610,14 +1652,6 @@ def _build_detail_visual_html(biz: dict) -> str:
               <div class="website-block__url">{_safe_html(url_display)}</div>
             </div>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
-          </a>
-          <a href="{_safe_html(website)}" target="_blank" class="audit-cta">
-            <span class="audit-cta__accent"></span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"/>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            Lancer l'audit SEO du site
           </a>
         </div>'''
 
