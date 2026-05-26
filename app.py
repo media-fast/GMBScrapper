@@ -1497,19 +1497,30 @@ def show_business_details(biz: dict) -> None:
             label_visibility="collapsed",
         )
 
+    # ─────────────── AUDIT SEO : trigger Streamlit caché ─────────────────
+    # Le bouton VISIBLE est dans l'iframe (sous l'URL du site). Son onclick
+    # JS accède au DOM parent (iframe est same-origin via allow-same-origin)
+    # et clique ce bouton Streamlit caché, qui déclenche l'audit côté Python.
+    # CSS hide via .st-key-bd-hidden-audit-run (cf. _BUSINESS_DETAIL_CSS).
+    dedup = biz.get("dedup_key")
+    cached_audit = get_seo_audit(dedup) if dedup and website else None
+    if website:
+        with st.container(key="bd-hidden-audit-run"):
+            if st.button("RUN_AUDIT_INTERNAL",
+                         key=f"bd_run_audit_hidden_{safe_key}"):
+                with st.spinner("Audit SEO + Google Business en cours… (~3 s)"):
+                    res = run_full_audit(biz)
+                save_seo_audit(dedup, res)
+                res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                cached_audit = res  # reflet immédiat sans attendre rerun
+                st.rerun()
+
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
-    visual_html = _build_detail_visual_html(biz)
+    visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
     # Hauteur fixée : l'iframe ne peut pas auto-fit son contenu. 1500px
     # couvre toutes les fiches (action bar + score + contact + dirigeants
     # + 3 onglets full content). scrolling=True au cas où.
     _components_html(visual_html, height=1500, scrolling=True)
-
-    # ─────────────── AUDIT SEO : bouton + résultats inline en dessous ──────
-    # Section dédiée immédiatement sous l'iframe, organisée et cohérente :
-    # bouton stylé en haut, résultats s'affichent juste dessous quand
-    # l'audit est généré (cache ou via clic).
-    if website:
-        _render_audit_seo_block(biz, safe_key)
 
 
 # ===========================================================================
@@ -1520,8 +1531,49 @@ def show_business_details(biz: dict) -> None:
 # Rendu via st.components.v1.html() dans un iframe isolé → zéro interférence
 # avec le CSS de Streamlit/BaseWeb.
 
-def _build_detail_visual_html(biz: dict) -> str:
-    """Construit le document HTML complet pour l'iframe de fiche détail."""
+def _build_audit_summary_compact_html(audit: dict) -> str:
+    """Affichage compact de l'audit SEO pour la sidebar iframe.
+
+    Volontairement minimal (le user veut peu d'infos, prompt détaillé à venir) :
+    - Score global en pill colorée
+    - Sub-scores web + gmb sur une ligne
+    - Date de génération en très petit
+    """
+    global_score = audit.get("global_score", 0) or 0
+    web_score = (audit.get("web") or {}).get("score", 0) or 0
+    gmb_score = (audit.get("gmb") or {}).get("score", 0) or 0
+    ts = audit.get("_generated_at", "") or ""
+
+    # Couleur du pill selon score
+    if global_score >= 80:
+        bg, fg = "#E6F7EE", "#0F9D58"   # vert
+    elif global_score >= 60:
+        bg, fg = "#FFF6E5", "#B5740A"   # ambre
+    else:
+        bg, fg = "#FDECEC", "#D33B3B"   # rouge
+
+    return f'''
+        <div style="margin-top: 12px; padding: 12px 14px; background: var(--cream); border-radius: 11px; border: 1px solid var(--ink-100);">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px;">
+            <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-500);">Audit SEO</div>
+            <div style="background: {bg}; color: {fg}; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;">{global_score}/100</div>
+          </div>
+          <div style="display: flex; gap: 14px; font-size: 11px; color: var(--ink-700);">
+            <div><span style="color: var(--ink-400);">Web</span> <strong style="color: var(--ink-900);">{web_score}</strong></div>
+            <div><span style="color: var(--ink-400);">GMB</span> <strong style="color: var(--ink-900);">{gmb_score}</strong></div>
+          </div>
+          {f'<div style="margin-top: 6px; font-size: 10px; color: var(--ink-400);">Généré le {_safe_html(ts)}</div>' if ts else ''}
+        </div>'''
+
+
+def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> str:
+    """Construit le document HTML complet pour l'iframe de fiche détail.
+
+    Args:
+        biz: dict de l'entreprise
+        cached_audit: audit SEO en cache à embedder dans la sidebar (sous l'URL),
+                      None si pas encore généré
+    """
     import re as _re
     from datetime import datetime as _dt
 
@@ -1637,6 +1689,25 @@ def _build_detail_visual_html(biz: dict) -> str:
     website_block = ""
     if website:
         url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
+        # ─── Bouton audit-cta : onclick clique le bouton Streamlit caché ───
+        button_label = "Régénérer l'audit SEO" if cached_audit else "Lancer l'audit SEO du site"
+        audit_button_html = f'''
+          <button onclick="(function(){{var b=window.parent.document.querySelector('.st-key-bd-hidden-audit-run button');if(b){{b.click();}}else{{console.error('hidden audit btn not found');}}}})()" class="audit-cta" type="button">
+            <span class="audit-cta__accent"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            {button_label}
+          </button>'''
+
+        # ─── Affichage compact de l'audit (sous le bouton, si cache) ───
+        # Minimal volontairement : score pill global + 2 sub-scores web/gmb.
+        # Le détail viendra avec le nouveau prompt utilisateur.
+        audit_summary_html = ""
+        if cached_audit:
+            audit_summary_html = _build_audit_summary_compact_html(cached_audit)
+
         website_block = f'''
         <div class="website-block">
           <a href="{_safe_html(website)}" target="_blank" class="website-block__main">
@@ -1653,6 +1724,8 @@ def _build_detail_visual_html(biz: dict) -> str:
             </div>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
           </a>
+          {audit_button_html}
+          {audit_summary_html}
         </div>'''
 
     address_block = ""
@@ -2724,6 +2797,18 @@ _BUSINESS_DETAIL_CSS = """
 [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
   padding: 16px 22px 22px !important;
   border-top: 1px dashed var(--bd-ink-200, #E3E1F0) !important;
+}
+
+/* Trigger AUDIT caché : container 100% invisible mais le bouton existe dans
+   le DOM pour que le JS de l'iframe puisse le cliquer via document.querySelector.
+   On utilise visibility:hidden + width/height 0 plutôt que display:none —
+   certains navigateurs/Streamlit ignorent les clicks sur display:none. */
+.st-key-bd-hidden-audit-run {
+  position: absolute !important;
+  left: -9999px !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
 }
 
 /* CTA Audit SEO : bouton indigo-900 (scopé via st.container key="bd-audit-cta") */
