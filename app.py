@@ -1658,66 +1658,85 @@ def _build_audit_summary_compact_html(audit: dict) -> str:
 def _scope_css_rules(css: str, scope: str) -> str:
     """Préfixe toutes les règles CSS avec un scope (ex. `.fp-detail-root`).
 
-    Skip les @-rules (@keyframes, @media, @import, @supports) et les
-    sélecteurs déjà préfixés. Préserve les @keyframes percentages (0%, 50%)
-    intacts car ce ne sont pas des sélecteurs de bloc.
+    Parser brace-matching robuste qui gère :
+      - Strip des commentaires /* ... */ multi-lignes
+      - @keyframes : préservés intacts (les percentages 0%, 50%, from, to
+        ne doivent pas être préfixés)
+      - @media, @supports : récursivement scopés à l'intérieur (CRITIQUE :
+        sinon les règles responsive comme `.sidebar` à l'intérieur d'un
+        @media écraseraient le CSS Streamlit !)
+      - @import, @charset : copiés tels quels
+      - Sélecteurs body/:root/* → convertis en référence au scope
+      - Tous autres sélecteurs préfixés `.scope sel`
     """
     import re as _re
-    chunks = css.split('}')
-    out = []
-    inside_at_rule = False
-    at_rule_depth = 0
-    for chunk in chunks:
-        # Détecter si on entre dans un @-rule (keyframes, media)
-        opens = chunk.count('{')
-        if '@' in chunk and ('@keyframes' in chunk or '@media' in chunk or '@supports' in chunk):
-            at_rule_depth += opens
-            inside_at_rule = True
-            out.append(chunk)
-            continue
-        if inside_at_rule:
-            at_rule_depth -= 1
-            if at_rule_depth <= 0:
-                inside_at_rule = False
-            out.append(chunk)
-            continue
-        if '{' not in chunk:
-            out.append(chunk)
-            continue
-        idx = chunk.rfind('{')
-        sel = chunk[:idx]
-        body = chunk[idx:]
-        sel_stripped = sel.strip()
-        if not sel_stripped or sel_stripped.startswith('@') or sel_stripped.startswith('/*'):
-            out.append(chunk)
-            continue
-        # Split selector list par virgule, préfixer chaque
-        parts = [p.strip() for p in sel.split(',')]
-        new_parts = []
-        for p in parts:
-            if not p:
-                new_parts.append(p)
-                continue
-            if p.startswith(scope):
-                new_parts.append(p)
-                continue
-            # Cas spéciaux qu'on convertit en sélecteur sur le scope
-            if p in ('*', 'html', 'body', ':root'):
-                if p == 'body' or p == ':root':
-                    # 'body' / ':root' deviennent le scope lui-même
-                    new_parts.append(scope)
-                elif p == '*':
-                    # '*' devient '.scope *' (descendants seulement)
-                    new_parts.append(f'{scope} *')
-                else:
+    # 1. Strip tous les commentaires
+    css = _re.sub(r'/\*.*?\*/', '', css, flags=_re.DOTALL)
+
+    result = []
+    i = 0
+    n = len(css)
+
+    while i < n:
+        # Trouve la prochaine accolade ouvrante
+        brace_open = css.find('{', i)
+        if brace_open < 0:
+            result.append(css[i:])
+            break
+        selector = css[i:brace_open]
+        sel_stripped = selector.strip()
+
+        # Trouve l'accolade fermante avec brace-matching
+        depth = 1
+        j = brace_open + 1
+        while j < n and depth > 0:
+            ch = css[j]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            j += 1
+        # j pointe APRÈS le `}` final
+        block_content = css[brace_open + 1:j - 1]
+
+        if sel_stripped.startswith('@keyframes'):
+            # Pas de modif : les percentages 0%/50%/from/to ne sont pas des selectors
+            result.append(selector + '{' + block_content + '}')
+        elif sel_stripped.startswith('@media') or sel_stripped.startswith('@supports'):
+            # Récursion : scope les règles à l'intérieur
+            inner_scoped = _scope_css_rules(block_content, scope)
+            result.append(selector + '{' + inner_scoped + '}')
+        elif sel_stripped.startswith('@'):
+            # @import, @charset, etc.
+            result.append(selector + '{' + block_content + '}')
+        elif not sel_stripped:
+            result.append(selector + '{' + block_content + '}')
+        else:
+            # Règle normale : préfixer chaque sélecteur de la liste
+            parts = [p.strip() for p in selector.split(',')]
+            new_parts = []
+            for p in parts:
+                if not p:
+                    continue
+                if p.startswith(scope):
                     new_parts.append(p)
-                continue
-            new_parts.append(f'{scope} {p}')
-        # Préserver indentation (premiers espaces du sel originel)
-        leading = sel[:len(sel) - len(sel.lstrip())]
-        new_sel = ', '.join(new_parts)
-        out.append(leading + new_sel + body)
-    return '}'.join(out)
+                elif p in ('*', 'html', 'body', ':root'):
+                    if p in ('body', ':root'):
+                        new_parts.append(scope)
+                    elif p == '*':
+                        new_parts.append(f'{scope} *')
+                    else:
+                        new_parts.append(p)
+                else:
+                    new_parts.append(f'{scope} {p}')
+            new_sel = ', '.join(new_parts)
+            # Préserver indentation
+            leading = selector[:len(selector) - len(selector.lstrip())]
+            result.append(leading + new_sel + ' {' + block_content + '}')
+
+        i = j
+
+    return ''.join(result)
 
 
 def _iframe_html_to_inline(iframe_html: str, scope_class: str = 'fp-detail-root') -> str:
