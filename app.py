@@ -2059,17 +2059,22 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     --radius-lg: 16px;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  /* PAS de min-height: 100vh ici : provoquerait une boucle d'agrandissement
+     infinie avec resizeFrameToContent (iframe grandit → 100vh grandit →
+     body grandit → ResizeObserver tire → iframe grandit encore → 24000px+). */
   body {{
     font-family: 'Inter', system-ui, sans-serif;
     background: var(--cream); color: var(--ink-900);
-    font-size: 14px; line-height: 1.5; min-height: 100vh;
+    font-size: 14px; line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }}
   .serif {{ font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; }}
   .mono {{ font-family: 'JetBrains Mono', monospace; }}
 
+  /* PAS de position:sticky dans l'iframe : pas de scroll (iframe ajustée
+     au contenu). Sticky causait des artefacts visuels sur certains
+     navigateurs avec un iframe sized-to-content. */
   .action-bar {{
-    position: sticky; top: 0; z-index: 50;
     background: rgba(251, 249, 244, 0.85);
     backdrop-filter: saturate(180%) blur(20px);
     -webkit-backdrop-filter: saturate(180%) blur(20px);
@@ -2104,7 +2109,10 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   .btn--call:hover {{ background: #0a8049; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(15, 157, 88, 0.3); }}
 
   .shell {{ max-width: 1320px; margin: 0 auto; padding: 32px; display: grid; grid-template-columns: 380px 1fr; gap: 32px; align-items: start; }}
-  .sidebar {{ position: sticky; top: 90px; display: flex; flex-direction: column; gap: 16px; }}
+  /* PAS de position:sticky sur la sidebar : pas utile dans un iframe à
+     hauteur ajustée au contenu (pas de scroll). Causait aussi des
+     glitches de mesure avec ResizeObserver. */
+  .sidebar {{ display: flex; flex-direction: column; gap: 16px; }}
   .card {{ background: var(--paper); border-radius: var(--radius-lg); border: 1px solid var(--ink-100); box-shadow: var(--shadow-sm); overflow: hidden; }}
 
   .identity-card {{ padding: 28px 28px 24px; position: relative; }}
@@ -2493,19 +2501,31 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   window.launchAuditWithLoader = launchAuditWithLoader;
 
   // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
-  // L'iframe Streamlit a un height fixe (1500px par défaut) → on le réduit
-  // dynamiquement au contenu réel. window.frameElement marche car l'iframe
-  // est same-origin (sandbox include allow-same-origin).
+  // L'iframe Streamlit a un height fixe → on l'ajuste au contenu réel.
+  // window.frameElement marche car l'iframe est same-origin (sandbox include
+  // allow-same-origin).
+  //
+  // GARDE-FOU CONTRE BOUCLE INFINIE : avant on avait min-height:100vh sur
+  // body qui causait : iframe grandit → 100vh grandit → body grandit →
+  // ResizeObserver tire → iframe grandit encore (loop, finissait à 24000px+).
+  // Maintenant body n'a plus min-height, mais on garde un dampener qui
+  // ignore les redimensions < 2px (bruit) et plafonne à 3000px (sécurité).
+  let lastAppliedHeight = 0;
   function resizeFrameToContent() {{
     try {{
       const frame = window.frameElement;
       if (!frame) return;
+      // Mesure stable : prendre le max de scrollHeight (body + doc element)
       const h = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight
       );
-      // +16px de marge basse pour respirer
-      frame.style.height = (h + 16) + 'px';
+      // Plafond de sécurité au cas où quelque chose merderait
+      const clamped = Math.min(h + 8, 3000);
+      // Ignore changements < 2px (bruit de mesure, évite la boucle)
+      if (Math.abs(clamped - lastAppliedHeight) < 2) return;
+      lastAppliedHeight = clamped;
+      frame.style.height = clamped + 'px';
     }} catch (e) {{
       console.error('resizeFrameToContent failed:', e);
     }}
@@ -2518,10 +2538,11 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     window.addEventListener('load', resizeFrameToContent);
   }}
   // Re-resize dynamique : tab switch, accordion toggle, loader audit, etc.
+  // (Le guard < 2px coupe la boucle.)
   if (typeof ResizeObserver !== 'undefined') {{
     new ResizeObserver(resizeFrameToContent).observe(document.body);
   }}
-  // Délai de sécurité au cas où fonts Google Fonts chargent en retard
+  // Délai de sécurité au cas où Google Fonts arrivent en retard
   setTimeout(resizeFrameToContent, 300);
   setTimeout(resizeFrameToContent, 800);
 </script>
