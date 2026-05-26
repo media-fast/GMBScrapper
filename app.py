@@ -1459,6 +1459,46 @@ def show_business_details(biz: dict) -> None:
     status = biz.get("call_status") or "À appeler"
     website = biz.get("website")
 
+    # ─────────────── CSS hide pour le bouton Streamlit caché ─────────────
+    # Le CSS au niveau page ne cascade pas toujours dans le portal du
+    # @st.dialog → on ré-injecte ici pour s'assurer que le container
+    # `.st-key-bd-hidden-audit-run` (qui contient le bouton trigger
+    # déclenché par JS depuis l'iframe) est invisible.
+    try:
+        st.html("""
+<style>
+.st-key-bd-hidden-audit-run {
+    position: absolute !important;
+    left: -9999px !important;
+    top: -9999px !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+.st-key-bd-hidden-audit-run * {
+    visibility: hidden !important;
+}
+</style>""")
+    except AttributeError:
+        st.markdown("""
+<style>
+.st-key-bd-hidden-audit-run {
+    position: absolute !important;
+    left: -9999px !important;
+    top: -9999px !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+.st-key-bd-hidden-audit-run * {
+    visibility: hidden !important;
+}
+</style>""", unsafe_allow_html=True)
+
     # ─────────────── ACTION ROW NATIVE (au-dessus de l'iframe) ───────────────
     # Deux actions principales : Appeler (Ringover) + Changer statut.
     # L'audit SEO est rendu DESSOUS l'iframe (voir plus bas) pour que les
@@ -1521,10 +1561,11 @@ def show_business_details(biz: dict) -> None:
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect maquette) ───────
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    # Hauteur fixée : l'iframe ne peut pas auto-fit son contenu. 1500px
-    # couvre toutes les fiches (action bar + score + contact + dirigeants
-    # + 3 onglets full content). scrolling=True au cas où.
-    _components_html(visual_html, height=1500, scrolling=True)
+    # Hauteur initiale = 800px (taille moyenne d'une fiche). Le JS embarqué
+    # dans l'iframe va l'ajuster dynamiquement via window.frameElement à la
+    # hauteur réelle du contenu, après chargement + sur chaque ResizeObserver
+    # event (tab switch, accordion toggle, loader audit, etc.).
+    _components_html(visual_html, height=800, scrolling=False)
 
 
 # ===========================================================================
@@ -2450,6 +2491,39 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   }}
   // Expose globalement pour que onclick="launchAuditWithLoader(this)" marche
   window.launchAuditWithLoader = launchAuditWithLoader;
+
+  // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
+  // L'iframe Streamlit a un height fixe (1500px par défaut) → on le réduit
+  // dynamiquement au contenu réel. window.frameElement marche car l'iframe
+  // est same-origin (sandbox include allow-same-origin).
+  function resizeFrameToContent() {{
+    try {{
+      const frame = window.frameElement;
+      if (!frame) return;
+      const h = Math.max(
+        document.body.scrollHeight,
+        document.documentElement.scrollHeight
+      );
+      // +16px de marge basse pour respirer
+      frame.style.height = (h + 16) + 'px';
+    }} catch (e) {{
+      console.error('resizeFrameToContent failed:', e);
+    }}
+  }}
+
+  // Initial resize après chargement complet (fonts, images)
+  if (document.readyState === 'complete') {{
+    resizeFrameToContent();
+  }} else {{
+    window.addEventListener('load', resizeFrameToContent);
+  }}
+  // Re-resize dynamique : tab switch, accordion toggle, loader audit, etc.
+  if (typeof ResizeObserver !== 'undefined') {{
+    new ResizeObserver(resizeFrameToContent).observe(document.body);
+  }}
+  // Délai de sécurité au cas où fonts Google Fonts chargent en retard
+  setTimeout(resizeFrameToContent, 300);
+  setTimeout(resizeFrameToContent, 800);
 </script>
 
 </body>
