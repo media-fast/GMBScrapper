@@ -1499,9 +1499,11 @@ def render_detail_page(biz: dict) -> None:
     #      - .stIFrame (classe stable)
     #      - .st-emotion-cache-4rsbii (wrapper signalé par utilisateur)
     #      - data-testid="stElementContainer" qui contient l'iframe
+    # CSS minimal au niveau page Streamlit : juste le hide du bouton
+    # Streamlit caché (cliqué par JS depuis l'iframe). Tout le reste du
+    # styling est DANS l'iframe, isolé du CSS Streamlit.
     _detail_page_css = """
 <style>
-/* ─── Trigger Streamlit caché (cliqué par JS depuis le HTML inline) ── */
 .st-key-bd-hidden-audit-run {
     position: absolute !important;
     left: -9999px !important;
@@ -1514,72 +1516,6 @@ def render_detail_page(biz: dict) -> None:
 }
 .st-key-bd-hidden-audit-run * {
     visibility: hidden !important;
-}
-
-/* ─── Scroll naturel sur la page détail (Streamlit a parfois overflow:hidden
-       sur certains conteneurs qui empêche de scroller toute la fiche) ── */
-html, body,
-[data-testid="stMain"],
-[data-testid="stMainBlockContainer"],
-[data-testid="stAppViewContainer"] {
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    height: auto !important;
-    max-height: none !important;
-}
-
-/* ─── SVG icons inside .fp-detail-root : forcer display:block + dimensions
-       Sinon certains navigateurs / Streamlit globaux les rendent
-       invisibles (collapse à 0×0) ─────────────────────────────────────── */
-.fp-detail-root svg {
-    display: block !important;
-    vertical-align: middle;
-    flex-shrink: 0;
-}
-.fp-detail-root .contact-item__icon svg,
-.fp-detail-root .website-block__icon svg {
-    width: 15px !important;
-    height: 15px !important;
-}
-.fp-detail-root .eval-card__icon svg {
-    width: 16px !important;
-    height: 16px !important;
-}
-.fp-detail-root .stat-row__label svg {
-    width: 14px !important;
-    height: 14px !important;
-}
-.fp-detail-root .ext-link__icon svg {
-    width: 17px !important;
-    height: 17px !important;
-}
-.fp-detail-root .acc-icon svg {
-    width: 18px !important;
-    height: 18px !important;
-}
-.fp-detail-root .breadcrumb svg,
-.fp-detail-root .rank-badge svg,
-.fp-detail-root .acc-chevron svg,
-.fp-detail-root .ext-link__arrow svg,
-.fp-detail-root .admins-card__title svg {
-    width: 12px !important;
-    height: 12px !important;
-}
-.fp-detail-root .admin-action svg {
-    width: 14px !important;
-    height: 14px !important;
-}
-.fp-detail-root .empty-state__icon svg {
-    width: 26px !important;
-    height: 26px !important;
-}
-.fp-detail-root .audit-cta svg {
-    width: 13px !important;
-    height: 13px !important;
-}
-.fp-detail-root .btn svg {
-    width: 15px !important;
-    height: 15px !important;
 }
 </style>"""
     try:
@@ -1647,24 +1583,25 @@ html, body,
                 res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 cached_audit = res  # reflet immédiat dans le rendu courant
 
-    # ─────────────── FICHE VISUELLE INLINE (pas d'iframe) ────────────────
-    # On utilise st.html() qui injecte le HTML directement dans le DOM
-    # Streamlit (même document, PAS d'iframe). Fini les problèmes :
-    #   - hauteur fixe / boucle de resize / wrapper qui ne s'adapte pas
-    #   - bridge JS entre iframe et parent
-    #   - warning « st.components.v1.html will be removed »
+    # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect template) ─────
+    # Retour à l'iframe après échec des tentatives inline (la transformation
+    # CSS/HTML pour rendre le template inline était trop fragile : SVG icons
+    # invisibles, scroll cassé, tabs/accordéons fragiles).
     #
-    # Le HTML s'adapte naturellement à son contenu (pas de hauteur fixe).
-    # Trade-off : <script> ne s'exécutent pas via st.html (innerHTML
-    # security). On remplace :
-    #   - Tabs JS → CSS-only avec radio button trick
-    #   - Accordéons JS → <details>/<summary> natif HTML
-    #   - audit-cta onclick → inline onclick (qui MARCHE via innerHTML)
+    # L'iframe garantit :
+    #   - CSS 100% isolé (zéro collision avec Streamlit)
+    #   - JS natif fonctionnel (tabs cliquables, accordéons toggleables)
+    #   - Design pixel-perfect identique au template fiche-entreprise.html
+    #
+    # Trade-off accepté : warning « st.components.v1.html will be removed
+    # after 2026-06-01 » (on a du temps pour migrer) + petit vide en bas
+    # si contenu < height (scrolling=True permet d'accéder à tout le contenu).
+    #
+    # Hauteur 1800px : large mais sans excès. scrolling=True : si jamais
+    # contenu plus grand (ex. nombreux dirigeants + NACE), user peut
+    # scroller dans l'iframe.
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    try:
-        st.html(visual_html)
-    except AttributeError:
-        st.markdown(visual_html, unsafe_allow_html=True)
+    _components_html(visual_html, height=1800, scrolling=True)
 
 
 # ===========================================================================
@@ -2949,8 +2886,11 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
 
 </body>
 </html>"""
-    # Convertit le HTML iframe-style → inline pour st.html() (sans iframe)
-    return _iframe_html_to_inline(_iframe_html_string)
+    # Retour à l'iframe : on retourne le HTML iframe-style tel quel
+    # (rendu via st.components.v1.html dans render_detail_page).
+    # Le template fiche-entreprise.html est ainsi rendu DANS un iframe isolé,
+    # CSS + JS fonctionnent à 100% comme prévu par le template.
+    return _iframe_html_string
 
 
 # ===========================================================================
