@@ -2115,29 +2115,59 @@ def _build_credit_health_block_html(biz: dict,
                                     has_cached_credit: bool = False) -> str:
     """Bloc « Santé financière » pour la sidebar iframe.
 
-    Affiche la pastille couleur (rouge/orange/jaune/vert/gris) + la liste
-    des raisons en puces + un bouton CTA en bas qui :
-      - si AUCUN rapport IA en cache : « Analyser en détail » → déclenche
-        la génération via le bouton Streamlit caché bd-hidden-credit-run
-      - si rapport IA en cache : « Voir l'analyse complète » → ouvre le
-        dialog via bd-hidden-view-credit-run
+    Affiche (selon les données disponibles) :
+      - Pastille couleur (rouge/orange/jaune/vert/gris) + raisons en puces
+        si l'heuristique Phase 1 a été calculée
+      - Sinon, un placeholder « Pas encore évalué » (cas des fiches
+        scrapées avant Phase 1 ou sans BCE)
+      - Bouton CTA EN BAS quand l'entreprise a un BCE :
+          * pas de rapport IA en cache → « Analyser en détail »
+          * rapport IA en cache       → « Voir l'analyse complète »
 
-    Le bouton n'apparaît que si l'entreprise a un BCE (l'API BNB en a
-    besoin). Rend vide si aucun scoring heuristique n'a été calculé.
+    Rend vide UNIQUEMENT si la fiche n'a NI heuristique NI BCE (rien à
+    montrer ni à proposer).
     """
+    has_bce = bool((biz.get("bce_number") or "").strip())
     color = biz.get("credit_color")
-    if not color or color not in _CREDIT_BLOCK_PALETTE:
+    has_score = bool(color and color in _CREDIT_BLOCK_PALETTE)
+
+    # Cas : ni score ni BCE → rien à afficher
+    if not has_score and not has_bce:
         return ""
-    pal = _CREDIT_BLOCK_PALETTE[color]
-    label = biz.get("credit_label") or color.upper()
-    reasons_raw = biz.get("credit_reasons") or "[]"
-    try:
-        import json as _json
-        reasons = _json.loads(reasons_raw) if isinstance(reasons_raw, str) else reasons_raw
-    except Exception:
+
+    # Cas avec heuristique : pastille + raisons
+    if has_score:
+        pal = _CREDIT_BLOCK_PALETTE[color]
+        label = biz.get("credit_label") or color.upper()
+        reasons_raw = biz.get("credit_reasons") or "[]"
+        try:
+            import json as _json
+            reasons = _json.loads(reasons_raw) if isinstance(reasons_raw, str) else reasons_raw
+        except Exception:
+            reasons = []
+        if not isinstance(reasons, list):
+            reasons = []
+        pill_html = (
+            f'<span style="display: inline-flex; align-items: center; gap: 5px;'
+            f'background: {pal["bg"]}; color: {pal["fg"]};'
+            f'padding: 3px 10px; border-radius: 999px;'
+            f'font-size: 11px; font-weight: 700;">'
+            f'<svg width="11" height="11" viewBox="0 0 24 24" fill="none"'
+            f'stroke="currentColor" stroke-width="2.2"'
+            f'stroke-linecap="round" stroke-linejoin="round">{pal["icon"]}</svg>'
+            f'{_safe_html(label)}</span>'
+        )
+    else:
+        # Cas SANS heuristique mais AVEC BCE : placeholder neutre
         reasons = []
-    if not isinstance(reasons, list):
-        reasons = []
+        pill_html = (
+            '<span style="display: inline-flex; align-items: center; gap: 5px;'
+            'background: #F1F5F9; color: #64748B;'
+            'padding: 3px 10px; border-radius: 999px;'
+            'font-size: 11px; font-weight: 700; font-style: italic;">'
+            'Pas encore évalué</span>'
+        )
+
     reasons_html = ""
     if reasons:
         items = "".join(
@@ -2148,10 +2178,17 @@ def _build_credit_health_block_html(biz: dict,
         reasons_html = (
             f'<ul style="margin: 8px 0 0 0; padding-left: 18px;">{items}</ul>'
         )
+    elif not has_score:
+        # Hint quand pas d'heuristique : cliquer le bouton pour évaluer
+        reasons_html = (
+            '<div style="margin: 8px 0 0 0; font-size: 11.5px; '
+            'color: var(--ink-500); font-style: italic;">'
+            'Lance l\'analyse IA ci-dessous pour obtenir un verdict '
+            'argumenté + plafond crédit conseillé.</div>'
+        )
 
     # ─── Bouton CTA (uniquement si BCE → la skill IA en a besoin) ───
     cta_html = ""
-    has_bce = bool((biz.get("bce_number") or "").strip())
     if has_bce:
         if has_cached_credit:
             # Voir l'analyse → clique bd-hidden-view-credit-run
@@ -2202,15 +2239,7 @@ def _build_credit_health_block_html(biz: dict,
                         text-transform: uppercase; color: var(--ink-500);">
               Santé financière
             </div>
-            <span style="display: inline-flex; align-items: center; gap: 5px;
-                         background: {pal["bg"]}; color: {pal["fg"]};
-                         padding: 3px 10px; border-radius: 999px;
-                         font-size: 11px; font-weight: 700;">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2.2"
-                   stroke-linecap="round" stroke-linejoin="round">{pal["icon"]}</svg>
-              {_safe_html(label)}
-            </span>
+            {pill_html}
           </div>
           {reasons_html}
           {cta_html}

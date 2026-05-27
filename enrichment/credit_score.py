@@ -77,10 +77,35 @@ class CreditScore:
 # Helpers privés
 # ============================================================================
 
+# Mois français → numéro (pour le format BCE « 29 octobre 2009 »)
+_FR_MONTHS = {
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4,
+    "mai": 5, "juin": 6, "juillet": 7, "août": 8, "aout": 8,
+    "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12,
+    "decembre": 12,
+}
+
+
 def _parse_date(s: Optional[str]) -> Optional[date]:
+    """Parse une date dans divers formats :
+      - ISO  : 2009-10-29, 2009-10-29T12:00:00
+      - EU   : 29-10-2009, 29/10/2009
+      - FR   : 29 octobre 2009 (format BCE)
+      - YYYY : 2009 (année seule → 1er janvier)
+    """
     if not s:
         return None
     s = str(s).strip()
+
+    # Tentative format français textuel ("29 octobre 2009")
+    parts = s.lower().split()
+    if len(parts) == 3 and parts[1] in _FR_MONTHS:
+        try:
+            return date(int(parts[2]), _FR_MONTHS[parts[1]], int(parts[0]))
+        except (ValueError, TypeError):
+            pass
+
+    # Formats classiques par strptime
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%Y"):
         try:
             return datetime.strptime(s[:len(fmt) + 2], fmt).date()
@@ -131,6 +156,15 @@ def compute_credit_score(
     Returns:
         CreditScore avec color/score/label/reasons.
     """
+    # ── 0. Aucune donnée disponible → GRIS direct ──
+    # Évite la dérive vers ORANGE quand on n'a vraiment rien à évaluer
+    # (ex : fiche sans BCE, sans creation_date, sans dépôt BNB).
+    if not bce_status and not creation_date and not nbb_data:
+        return _verdict("gray", [
+            "Aucune donnée légale ou financière disponible",
+            "Impossible d'évaluer le risque crédit sans BCE",
+        ])
+
     # ── 1. Statut BCE : si cessé / faillite / liquidation → ROUGE immédiat ──
     if bce_status:
         status_norm = bce_status.lower()
@@ -171,14 +205,16 @@ def compute_credit_score(
     if months_since_deposit is None:
         # Si l'entreprise a plus de 24 mois et n'a JAMAIS déposé → orange
         # (obligation légale en Belgique pour la plupart des sociétés)
-        if age_months is None or age_months >= 24:
-            reasons = ["Aucun dépôt de comptes annuels trouvé à la BNB"]
-            if age_months is not None:
-                reasons.append(f"Entreprise créée il y a {age_months // 12} an(s) "
-                               "— les dépôts auraient dû être faits")
-            reasons.append("Manque de transparence financière — signal de prudence")
+        if age_months is not None and age_months >= 24:
+            reasons = [
+                "Aucun dépôt de comptes annuels trouvé à la BNB",
+                f"Entreprise créée il y a {age_months // 12} an(s) — les "
+                "dépôts auraient dû être faits",
+                "Manque de transparence financière — signal de prudence",
+            ]
             return _verdict("orange", reasons)
-        # Pas assez de recul → gris
+        # Âge inconnu ou pas assez de recul → gris (on ne sait pas si
+        # l'absence de dépôt est anormale)
         return _verdict("gray", ["Pas de données financières BNB disponibles"])
 
     # ── 6. Dépôts en retard ──
