@@ -1816,9 +1816,11 @@ def render_detail_page(biz: dict) -> None:
     #      - .stIFrame (classe stable)
     #      - .st-emotion-cache-4rsbii (wrapper signalé par utilisateur)
     #      - data-testid="stElementContainer" qui contient l'iframe
-    # CSS minimal au niveau page Streamlit : juste le hide du bouton
-    # Streamlit caché (cliqué par JS depuis l'iframe). Tout le reste du
-    # styling est DANS l'iframe, isolé du CSS Streamlit.
+    # CSS scopé à la page détail :
+    # 1. Hide du bouton Streamlit caché (cliqué par JS depuis l'iframe)
+    # 2. Force les wrappers Streamlit de l'iframe à shrink à la hauteur
+    #    de l'iframe (sinon ils gardent la hauteur initiale fixe = grand
+    #    vide blanc sous la fiche).
     _detail_page_css = """
 <style>
 .st-key-bd-hidden-audit-run {
@@ -1833,6 +1835,23 @@ def render_detail_page(biz: dict) -> None:
 }
 .st-key-bd-hidden-audit-run * {
     visibility: hidden !important;
+}
+
+/* Le wrapper qui contient l'iframe doit s'adapter à la hauteur de
+   l'iframe (qui est ajustée dynamiquement par resizeFrameToContent JS).
+   Sans ça, le wrapper garde la hauteur initiale (1100px) et crée un
+   vide blanc sous l'iframe avant la suite des éléments Streamlit. */
+[data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]),
+[data-testid="stElementContainer"]:has(> iframe.stIFrame) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+}
+/* Aussi les classes Emotion-CSS qu'on a déjà identifiées */
+.st-emotion-cache-4rsbii,
+.st-emotion-cache-fsrfgf {
+    height: auto !important;
+    min-height: 0 !important;
 }
 </style>"""
     try:
@@ -1901,24 +1920,12 @@ def render_detail_page(biz: dict) -> None:
                 cached_audit = res  # reflet immédiat dans le rendu courant
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect template) ─────
-    # Retour à l'iframe après échec des tentatives inline (la transformation
-    # CSS/HTML pour rendre le template inline était trop fragile : SVG icons
-    # invisibles, scroll cassé, tabs/accordéons fragiles).
-    #
-    # L'iframe garantit :
-    #   - CSS 100% isolé (zéro collision avec Streamlit)
-    #   - JS natif fonctionnel (tabs cliquables, accordéons toggleables)
-    #   - Design pixel-perfect identique au template fiche-entreprise.html
-    #
-    # Trade-off accepté : warning « st.components.v1.html will be removed
-    # after 2026-06-01 » (on a du temps pour migrer) + petit vide en bas
-    # si contenu < height (scrolling=True permet d'accéder à tout le contenu).
-    #
-    # Hauteur 1800px : large mais sans excès. scrolling=True : si jamais
-    # contenu plus grand (ex. nombreux dirigeants + NACE), user peut
-    # scroller dans l'iframe.
+    # Iframe avec CSS isolé + JS natif (tabs, accordéons).
+    # Hauteur initiale modeste (1100px). Le JS embarqué resizeFrameToContent
+    # ajuste l'iframe ET son wrapper Streamlit à la hauteur réelle du contenu
+    # via window.frameElement. Plus de vide blanc.
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
-    _components_html(visual_html, height=1800, scrolling=True)
+    _components_html(visual_html, height=1100, scrolling=True)
 
     # ─────────────── RAPPORT SEO IA (structuré Media Fast) ────────────────
     # Si un audit a été généré (cache ou via clic), on affiche son rapport
