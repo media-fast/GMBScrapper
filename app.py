@@ -63,12 +63,14 @@ from storage import (
     get_known_businesses,
     get_search,
     get_search_businesses,
+    get_credit_ai_report,
     get_seo_audit,
     history_stats,
     init_db,
     list_searches,
     mark_seen,
     save_briefing,
+    save_credit_ai_report,
     save_search,
     save_seo_audit,
     update_call_fields,
@@ -1724,6 +1726,74 @@ def _show_seo_report_dialog() -> None:
     )
 
 
+@st.dialog("Analyse crédit B2B — Media Fast", width="large")
+def _show_credit_report_dialog() -> None:
+    """Affiche le rapport crédit IA dans un popup premium stylé.
+
+    Lit le rapport depuis st.session_state (rempli par render_detail_page
+    avant l'ouverture). Réutilise le même CSS premium .sr-* que le rapport
+    SEO — la mise en page est identique (header + content markdown + footer),
+    seul le contenu change.
+    """
+    report_md = st.session_state.get("_credit_report_md", "")
+    provider_label = st.session_state.get("_credit_report_provider", "IA")
+    biz_name = st.session_state.get("_credit_report_biz_name", "Entreprise")
+
+    try:
+        st.html(_SEO_REPORT_DIALOG_CSS)
+    except AttributeError:
+        st.markdown(_SEO_REPORT_DIALOG_CSS, unsafe_allow_html=True)
+
+    # Header premium Media Fast — variante crédit
+    st.markdown(
+        '<div class="sr-root">'
+        '<div class="sr-header">'
+        '<div class="sr-header__brand">'
+        '<span class="sr-header__brand-dot"></span>'
+        '<span>Media Fast · Analyse crédit B2B</span>'
+        '</div>'
+        f'<h1 class="sr-header__title">{_safe_html(biz_name)}</h1>'
+        f'<div class="sr-header__sub">Rapport généré par {_safe_html(provider_label)}</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if report_md:
+        # Strip le header dupliqué (commence par « **Analyse crédit — … »)
+        import re as _re
+        cleaned_md = _re.sub(
+            r'^\s*\*\*Analyse cr[ée]dit[^*]+\*\*\s*\n+(?:---\s*\n+)?',
+            '', report_md, flags=_re.IGNORECASE,
+        )
+        # Strip footer markdown (« *Rapport crédit Media Fast … »)
+        cleaned_md = _re.sub(
+            r'\n+---\s*\n+\*Rapport cr[ée]dit Media Fast.+$',
+            '', cleaned_md, flags=_re.DOTALL | _re.IGNORECASE,
+        )
+
+        st.markdown(
+            f'<div class="sr-root sr-content">\n\n{cleaned_md}\n\n</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("Rapport crédit vide. Relancer l'analyse pour le régénérer.")
+
+    # Footer Media Fast
+    st.markdown(
+        '<div class="sr-root">'
+        '<div class="sr-footer">'
+        'Analyse crédit <strong>Media Fast</strong> — '
+        '<a href="mailto:contact@media-fast.be">contact@media-fast.be</a>'
+        '<br><span style="font-size:0.78rem;opacity:0.7;">'
+        'Analyse heuristique — ne remplace pas une étude crédit professionnelle.'
+        '</span>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_seo_audit_section(biz: dict) -> None:
     """Affiche/lance l'audit SEO complet (site web + GMB)."""
     dedup = biz.get("dedup_key")
@@ -1867,7 +1937,9 @@ def render_detail_page(biz: dict) -> None:
 <style>
 /* Hide des boutons Streamlit cachés cliqués par JS depuis l'iframe */
 .st-key-bd-hidden-audit-run,
-.st-key-bd-hidden-view-report-run {
+.st-key-bd-hidden-view-report-run,
+.st-key-bd-hidden-credit-run,
+.st-key-bd-hidden-view-credit-run {
     position: absolute !important;
     left: -9999px !important;
     top: -9999px !important;
@@ -1878,7 +1950,9 @@ def render_detail_page(biz: dict) -> None:
     pointer-events: none !important;
 }
 .st-key-bd-hidden-audit-run *,
-.st-key-bd-hidden-view-report-run * {
+.st-key-bd-hidden-view-report-run *,
+.st-key-bd-hidden-credit-run *,
+.st-key-bd-hidden-view-credit-run * {
     visibility: hidden !important;
 }
 
@@ -1949,12 +2023,53 @@ html, body,
                              key=f"bd_view_report_hidden_{safe_key}"):
                     _show_seo_report_dialog()
 
+    # ─────────────── ANALYSE CRÉDIT IA : 2 triggers Streamlit cachés ─────
+    # Même pattern que l'audit SEO : boutons visibles dans l'iframe
+    # sidebar (bloc Santé financière), onclick clique ces boutons cachés.
+    cached_credit = get_credit_ai_report(dedup) if dedup else None
+    has_bce = bool((biz.get("bce_number") or "").strip())
+
+    if has_bce:
+        # Trigger 1 : génération du rapport crédit IA
+        with st.container(key="bd-hidden-credit-run"):
+            if st.button("RUN_CREDIT_INTERNAL",
+                         key=f"bd_run_credit_hidden_{safe_key}"):
+                from enrichment.credit_ai_report import generate_credit_report
+                res = generate_credit_report(biz)
+                if res.get("ok"):
+                    save_credit_ai_report(dedup, res)
+                    cached_credit = {
+                        "report": res["report"],
+                        "meta": {"provider": res.get("provider"),
+                                 "message": res.get("message")},
+                        "_generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    }
+                else:
+                    st.toast(res.get("message", "Erreur génération rapport crédit"),
+                             icon=":material/error:")
+
+        # Trigger 2 : ouverture du dialog (si cache)
+        if cached_credit and cached_credit.get("report"):
+            st.session_state["_credit_report_md"] = cached_credit["report"]
+            st.session_state["_credit_report_provider"] = {
+                "openai": "OpenAI",
+                "anthropic": "Anthropic Claude",
+            }.get((cached_credit.get("meta") or {}).get("provider"), "IA")
+            st.session_state["_credit_report_biz_name"] = biz.get("name") or "Entreprise"
+
+            with st.container(key="bd-hidden-view-credit-run"):
+                if st.button("VIEW_CREDIT_INTERNAL",
+                             key=f"bd_view_credit_hidden_{safe_key}"):
+                    _show_credit_report_dialog()
+
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect template) ─────
     # Iframe avec CSS isolé + JS natif (tabs, accordéons).
     # Hauteur initiale modeste (1100px). Le JS embarqué resizeFrameToContent
     # ajuste l'iframe ET son wrapper Streamlit à la hauteur réelle du contenu
     # via window.frameElement. Plus de vide blanc.
-    visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
+    visual_html = _build_detail_visual_html(
+        biz, cached_audit=cached_audit, cached_credit=cached_credit,
+    )
     _components_html(visual_html, height=1100, scrolling=True)
 
     # NB : Le bouton « Voir le rapport SEO & GEO » est DANS l'iframe sidebar
@@ -1996,11 +2111,19 @@ _CREDIT_BLOCK_PALETTE = {
 }
 
 
-def _build_credit_health_block_html(biz: dict) -> str:
+def _build_credit_health_block_html(biz: dict,
+                                    has_cached_credit: bool = False) -> str:
     """Bloc « Santé financière » pour la sidebar iframe.
 
     Affiche la pastille couleur (rouge/orange/jaune/vert/gris) + la liste
-    des raisons en puces. Rend vide si aucun scoring n'a été calculé.
+    des raisons en puces + un bouton CTA en bas qui :
+      - si AUCUN rapport IA en cache : « Analyser en détail » → déclenche
+        la génération via le bouton Streamlit caché bd-hidden-credit-run
+      - si rapport IA en cache : « Voir l'analyse complète » → ouvre le
+        dialog via bd-hidden-view-credit-run
+
+    Le bouton n'apparaît que si l'entreprise a un BCE (l'API BNB en a
+    besoin). Rend vide si aucun scoring heuristique n'a été calculé.
     """
     color = biz.get("credit_color")
     if not color or color not in _CREDIT_BLOCK_PALETTE:
@@ -2026,6 +2149,50 @@ def _build_credit_health_block_html(biz: dict) -> str:
             f'<ul style="margin: 8px 0 0 0; padding-left: 18px;">{items}</ul>'
         )
 
+    # ─── Bouton CTA (uniquement si BCE → la skill IA en a besoin) ───
+    cta_html = ""
+    has_bce = bool((biz.get("bce_number") or "").strip())
+    if has_bce:
+        if has_cached_credit:
+            # Voir l'analyse → clique bd-hidden-view-credit-run
+            cta_html = '''
+            <button type="button" onclick="(function(){var b=window.parent.document.querySelector('.st-key-bd-hidden-view-credit-run button');if(b){b.click();}else{console.error('hidden view-credit btn not found');}})()"
+                    style="margin-top: 12px; width: 100%; padding: 9px 14px;
+                           background: linear-gradient(135deg, #6D28D9, #4C1D95);
+                           color: white; border: none; border-radius: 9px;
+                           font-size: 12px; font-weight: 600; cursor: pointer;
+                           display: inline-flex; align-items: center; justify-content: center;
+                           gap: 7px; transition: transform .12s, box-shadow .12s;
+                           box-shadow: 0 1px 3px rgba(76, 29, 149, 0.25);"
+                    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 10px rgba(76,29,149,0.3)';"
+                    onmouseout="this.style.transform='';this.style.boxShadow='0 1px 3px rgba(76,29,149,0.25)';">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              Voir l'analyse complète
+            </button>'''
+        else:
+            # Analyser → clique bd-hidden-credit-run (avec loader inline)
+            cta_html = '''
+            <button type="button" onclick="launchCreditWithLoader(this)"
+                    style="margin-top: 12px; width: 100%; padding: 9px 14px;
+                           background: white; color: #4C1D95;
+                           border: 1.5px solid #C4B5FD; border-radius: 9px;
+                           font-size: 12px; font-weight: 600; cursor: pointer;
+                           display: inline-flex; align-items: center; justify-content: center;
+                           gap: 7px; transition: all .12s;"
+                    onmouseover="this.style.background='#F5F3FF';this.style.borderColor='#A78BFA';"
+                    onmouseout="this.style.background='white';this.style.borderColor='#C4B5FD';">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              Analyser en détail
+            </button>'''
+
     return f'''
         <div style="margin-top: 12px; padding: 12px 14px; background: var(--cream);
                     border-radius: 11px; border: 1px solid var(--ink-100);">
@@ -2046,6 +2213,7 @@ def _build_credit_health_block_html(biz: dict) -> str:
             </span>
           </div>
           {reasons_html}
+          {cta_html}
         </div>'''
 
 
@@ -2343,13 +2511,20 @@ def _iframe_html_to_inline(iframe_html: str, scope_class: str = 'fp-detail-root'
     return f'<div class="{scope_class}"><style>{scoped_css}</style>{body}</div>'
 
 
-def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> str:
+def _build_detail_visual_html(
+    biz: dict,
+    cached_audit: dict | None = None,
+    cached_credit: dict | None = None,
+) -> str:
     """Construit le document HTML complet pour l'iframe de fiche détail.
 
     Args:
         biz: dict de l'entreprise
         cached_audit: audit SEO en cache à embedder dans la sidebar (sous l'URL),
                       None si pas encore généré
+        cached_credit: rapport crédit IA en cache (dict avec keys report/meta).
+                       Détermine si on affiche « Analyser en détail » ou
+                       « Voir l'analyse complète » dans le bloc santé.
     """
     import re as _re
     from datetime import datetime as _dt
@@ -2501,8 +2676,10 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
         # Généré le … » sous le bouton — demande explicite utilisateur.
         # Le bouton « Voir le rapport SEO & GEO » suffit.
 
-        # ─── Bloc santé financière (pastille crédit + raisons) ───
-        credit_health_html = _build_credit_health_block_html(biz)
+        # ─── Bloc santé financière (pastille crédit + raisons + bouton CTA) ───
+        credit_health_html = _build_credit_health_block_html(
+            biz, has_cached_credit=bool(cached_credit and cached_credit.get("report")),
+        )
 
         website_block = f'''
         <div class="website-block">
@@ -3252,6 +3429,33 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
   }}
   // Expose globalement pour que onclick="launchAuditWithLoader(this)" marche
   window.launchAuditWithLoader = launchAuditWithLoader;
+
+  // ─── Bouton « Analyser en détail » (rapport crédit IA) ───────────────
+  // Même pattern que launchAuditWithLoader mais pour le rapport crédit :
+  // remplace le contenu du bouton par un spinner + texte, puis clique le
+  // bouton Streamlit caché bd-hidden-credit-run dans le parent.
+  function launchCreditWithLoader(btn) {{
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.innerHTML =
+      '<div class="audit-spinner" style="border-top-color:#4C1D95;"></div>' +
+      '<span>Analyse en cours…</span>';
+    try {{
+      const parentBtn = window.parent.document.querySelector(
+        '.st-key-bd-hidden-credit-run button'
+      );
+      if (parentBtn) {{
+        parentBtn.click();
+      }} else {{
+        console.error('Hidden credit-run Streamlit button not found in parent');
+        btn.disabled = false;
+      }}
+    }} catch (e) {{
+      console.error('Failed to click parent credit button:', e);
+      btn.disabled = false;
+    }}
+  }}
+  window.launchCreditWithLoader = launchCreditWithLoader;
 
   // ─── Auto-resize de l'iframe à la hauteur du contenu ──────────────────
   // Triple stratégie :

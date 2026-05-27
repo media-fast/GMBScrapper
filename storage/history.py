@@ -104,6 +104,10 @@ MIGRATION_COLUMNS = {
     "credit_label": "TEXT",       # libellé FR humain (« Bon payeur », etc.)
     "credit_reasons": "TEXT",     # JSON-encoded list[str]
     "credit_computed_at": "TEXT", # timestamp du calcul
+    # Rapport crédit IA approfondi (enrichment/credit_ai_report.py)
+    "credit_ai_report": "TEXT",       # markdown du rapport IA
+    "credit_ai_report_at": "TEXT",    # timestamp de génération
+    "credit_ai_report_meta": "TEXT",  # JSON {provider, message, codes_count}
 }
 
 # Champs persistés pour chaque entreprise (lus depuis Business.to_dict())
@@ -434,6 +438,56 @@ def save_seo_audit(dedup_key_value: str, audit: dict) -> None:
         conn.execute(
             "UPDATE businesses SET seo_audit = ?, seo_audit_at = ? WHERE dedup_key = ?",
             (payload, now, dedup_key_value),
+        )
+
+
+def get_credit_ai_report(dedup_key_value: str) -> Optional[dict]:
+    """Récupère le dernier rapport crédit IA généré pour une fiche.
+
+    Returns:
+        dict avec keys 'report' (str markdown), 'meta' (dict provider/...),
+        '_generated_at' (str timestamp), ou None si pas de cache.
+    """
+    if not dedup_key_value:
+        return None
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT credit_ai_report, credit_ai_report_at, credit_ai_report_meta "
+            "FROM businesses WHERE dedup_key = ?",
+            (dedup_key_value,),
+        ).fetchone()
+    if not row or not row["credit_ai_report"]:
+        return None
+    try:
+        meta = _json.loads(row["credit_ai_report_meta"] or "{}")
+    except Exception:
+        meta = {}
+    return {
+        "report": row["credit_ai_report"],
+        "meta": meta,
+        "_generated_at": row["credit_ai_report_at"],
+    }
+
+
+def save_credit_ai_report(dedup_key_value: str, result: dict) -> None:
+    """Persiste le rapport crédit IA. `result` = dict du retour de
+    generate_credit_report (keys: report, provider, message, ...)."""
+    if not dedup_key_value or not result or not result.get("report"):
+        return
+    init_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    meta = {
+        "provider": result.get("provider"),
+        "message": result.get("message"),
+        "accounting_codes_count": result.get("accounting_codes_count", 0),
+    }
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE businesses SET credit_ai_report = ?, credit_ai_report_at = ?, "
+            "credit_ai_report_meta = ? WHERE dedup_key = ?",
+            (result["report"], now, _json.dumps(meta, ensure_ascii=False),
+             dedup_key_value),
         )
 
 
