@@ -45,6 +45,10 @@ class Business:
     nbb_revenue: Optional[str] = None
     nbb_equity: Optional[str] = None
     nbb_employees: Optional[str] = None
+    # Métadonnées dépôt BNB (alimentent le rapport crédit IA)
+    nbb_deposit_date: Optional[str] = None    # YYYY-MM-DD
+    nbb_model_type: Optional[str] = None      # FULL / ABBREVIATED / MICRO
+    nbb_deposits_count: Optional[int] = None
     companyweb_url: Optional[str] = None
     companyweb_score: Optional[str] = None
 

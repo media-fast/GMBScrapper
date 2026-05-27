@@ -90,13 +90,17 @@ async def _enrich_all(rows: list[sqlite3.Row]) -> int:
             conn.execute(
                 "UPDATE businesses SET "
                 "  nbb_year = COALESCE(?, nbb_year), "
+                "  nbb_deposit_date = ?, nbb_model_type = ?, "
+                "  nbb_deposits_count = ?, "
                 "  credit_color = ?, credit_score = ?, credit_label = ?, "
                 "  credit_reasons = ?, credit_computed_at = ?, "
                 "  credit_ai_report = NULL, credit_ai_report_at = NULL, "
                 "  credit_ai_report_meta = NULL "
                 "WHERE dedup_key = ?",
                 (
-                    data.year, score.color, score.score, score.label,
+                    data.year, data.deposit_date, data.model_type,
+                    data.deposits_count,
+                    score.color, score.score, score.label,
                     json.dumps(score.reasons, ensure_ascii=False),
                     score.computed_at, row["dedup_key"],
                 ),

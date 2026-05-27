@@ -92,6 +92,10 @@ MIGRATION_COLUMNS = {
     "nbb_revenue": "TEXT",
     "nbb_equity": "TEXT",
     "nbb_employees": "TEXT",
+    # Métadonnées du dernier dépôt BNB (alimentent generate_credit_report)
+    "nbb_deposit_date": "TEXT",     # YYYY-MM-DD du dernier dépôt
+    "nbb_model_type": "TEXT",       # FULL / ABBREVIATED / MICRO
+    "nbb_deposits_count": "INTEGER", # nombre total de dépôts
     "companyweb_url": "TEXT",
     "companyweb_score": "TEXT",
     "ai_briefing": "TEXT",        # JSON-encoded briefing IA
@@ -119,6 +123,7 @@ BUSINESS_PERSISTED_FIELDS = [
     "establishments_count", "nace_activities",
     "rating", "reviews_count", "hours", "gmaps_url", "plus_code",
     "nbb_url", "nbb_year", "nbb_revenue", "nbb_equity", "nbb_employees",
+    "nbb_deposit_date", "nbb_model_type", "nbb_deposits_count",
     "companyweb_url", "companyweb_score",
     "credit_color", "credit_score", "credit_label", "credit_reasons",
     "credit_computed_at",

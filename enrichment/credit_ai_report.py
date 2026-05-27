@@ -94,12 +94,24 @@ ne remplace pas une étude crédit professionnelle.*
 - Rapport court : aucun paragraphe rédigé, aucune intro, aucune conclusion
   en dehors du format imposé
 - Langue : français uniquement
-- Si une donnée est invérifiable : écrire « Non disponible » plutôt que
-  d'inventer un chiffre
-- Si TOUTES les données financières manquent, retourne un verdict
-  ⚪ **DONNÉES INSUFFISANTES** avec un signal d'alerte « Aucun dépôt
-  exploitable à la BNB » et une recommandation « Demander un acompte
-  ou refuser le crédit jusqu'à clarification »
+- Si un ratio chiffré est invérifiable : écrire « Non disponible » dans
+  la colonne Valeur du tableau RATIOS CLÉS — c'est OK, on ne pénalise PAS
+  l'entreprise pour ça
+- ⚠ Le verdict ⚪ DONNÉES INSUFFISANTES est RÉSERVÉ aux cas où on n'a
+  STRICTEMENT AUCUNE info exploitable (ni dépôts BNB, ni statut, ni âge).
+  Si on a juste les MÉTADONNÉES des dépôts (année, date, nombre, modèle)
+  sans les ratios chiffrés, c'est suffisant pour conclure :
+    * Dépôts récents + réguliers (≥3 dépôts, dernier <18 mois) → 🟢 BON
+      PAYEUR (« filing discipline » = bon indicateur de fiabilité, même
+      sans voir les ratios)
+    * Dépôts à jour mais peu nombreux ou jeune entreprise → 🟡 À
+      SURVEILLER
+    * Dépôts en retard (>24 mois) ou aucun → 🟠 À RISQUE
+    * Statut cessé / faillite → 🔴 MAUVAIS PAYEUR
+- Quand les ratios sont absents, justifie le verdict dans la phrase de
+  résumé en t'appuyant sur la régularité des dépôts (ex : « 42 dépôts
+  successifs, dernier exercice 2024 déposé en juillet 2025 → discipline
+  administrative forte »)
 - Sois CONSERVATEUR : en cas de doute, durcis le verdict (mieux vaut
   rater une affaire qu'un impayé)
 - Tous les montants en EUR, formatés FR (espace insécable comme séparateur
@@ -415,27 +427,38 @@ def generate_credit_report(business: dict) -> dict:
             "accounting_codes_count": 0,
         }
 
-    # 1. Fetch métadonnées BNB (déjà persistées au scrape via NbbData,
-    #    mais on les recalcule au cas où le score Phase 1 date ou n'a pas
-    #    été calculé avec NBB_API_KEY).
-    from .nbb import fetch_nbb_financials
+    # 1. Métadonnées BNB :
+    #    a) D'abord depuis le business dict (déjà persistées en DB par
+    #       le scrape ou le backfill Playwright — pas de re-fetch coûteux)
+    #    b) Si manquantes, on appelle fetch_nbb_financials avec
+    #       allow_scraping=True → tape l'API CBSO (si NBB_API_KEY) ou
+    #       le scraper Playwright en fallback (~3-5 s)
     bce = business.get("bce_number") or ""
-    nbb = fetch_nbb_financials(bce) if bce else None
     nbb_meta = {
-        "year": (nbb.year if nbb else None) or business.get("nbb_year"),
-        "deposit_date": nbb.deposit_date if nbb else None,
-        "model_type": nbb.model_type if nbb else None,
-        "deposits_count": nbb.deposits_count if nbb else 0,
+        "year": business.get("nbb_year"),
+        "deposit_date": business.get("nbb_deposit_date"),
+        "model_type": business.get("nbb_model_type"),
+        "deposits_count": int(business.get("nbb_deposits_count") or 0),
     }
+    # Si on n'a RIEN en DB mais qu'on a un BCE → fetch live (lent)
+    if bce and not nbb_meta["year"] and not nbb_meta["deposit_date"]:
+        from .nbb import fetch_nbb_financials
+        nbb = fetch_nbb_financials(bce, allow_scraping=True)
+        if nbb and nbb.available:
+            nbb_meta = {
+                "year": nbb.year or nbb_meta["year"],
+                "deposit_date": nbb.deposit_date,
+                "model_type": nbb.model_type,
+                "deposits_count": nbb.deposits_count,
+            }
 
     # 2. Fetch données comptables structurées (best effort)
     accounting: dict = {}
-    if nbb and nbb.available:
-        # ⚠ Le `reference` n'est pas dans NbbData actuel — on le récupère
-        # via un nouvel appel /references si besoin. Pour l'instant, on
-        # tape best-effort et on laisse vide si on n'a pas la ref.
-        # TODO Phase 2.1 : enrichir NbbData avec reference_number
-        pass
+    # TODO Phase 2.1 : enrichir NbbData avec reference_number pour pouvoir
+    # appeler /accountingData/{reference} et extraire les codes 10/15,
+    # 17/49, 9904, 70. Pour l'instant l'IA travaille sur les métadonnées
+    # (year/deposit_date/model_type/count) qui suffisent à donner un
+    # verdict utile sur la fiabilité du déposant.
 
     # 3. Reconstitue le score heuristique depuis le business dict
     try:

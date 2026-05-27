@@ -53,6 +53,10 @@ def _enrich_financial(business: Business) -> None:
         business.nbb_revenue = nbb.revenue
         business.nbb_equity = nbb.equity
         business.nbb_employees = nbb.employees
+        # Métadonnées dépôt pour le rapport IA
+        business.nbb_deposit_date = nbb.deposit_date
+        business.nbb_model_type = nbb.model_type
+        business.nbb_deposits_count = nbb.deposits_count
 
     cw = fetch_companyweb_score(business.bce_number)
     if cw.available:
