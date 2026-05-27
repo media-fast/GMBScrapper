@@ -1817,13 +1817,15 @@ def render_detail_page(biz: dict) -> None:
     #      - .st-emotion-cache-4rsbii (wrapper signalé par utilisateur)
     #      - data-testid="stElementContainer" qui contient l'iframe
     # CSS scopé à la page détail :
-    # 1. Hide du bouton Streamlit caché (cliqué par JS depuis l'iframe)
-    # 2. Force les wrappers Streamlit de l'iframe à shrink à la hauteur
-    #    de l'iframe (sinon ils gardent la hauteur initiale fixe = grand
-    #    vide blanc sous la fiche).
+    # 1. Hide des boutons Streamlit cachés (cliqués par JS depuis l'iframe)
+    # 2. Force les wrappers Streamlit de l'iframe à shrink (sinon vide blanc)
+    # 3. Scroll naturel sur la page détail (Streamlit a parfois
+    #    overflow:hidden qui bloque le scroll vers le bas)
     _detail_page_css = """
 <style>
-.st-key-bd-hidden-audit-run {
+/* Hide des boutons Streamlit cachés cliqués par JS depuis l'iframe */
+.st-key-bd-hidden-audit-run,
+.st-key-bd-hidden-view-report-run {
     position: absolute !important;
     left: -9999px !important;
     top: -9999px !important;
@@ -1833,25 +1835,32 @@ def render_detail_page(biz: dict) -> None:
     visibility: hidden !important;
     pointer-events: none !important;
 }
-.st-key-bd-hidden-audit-run * {
+.st-key-bd-hidden-audit-run *,
+.st-key-bd-hidden-view-report-run * {
     visibility: hidden !important;
 }
 
-/* Le wrapper qui contient l'iframe doit s'adapter à la hauteur de
-   l'iframe (qui est ajustée dynamiquement par resizeFrameToContent JS).
-   Sans ça, le wrapper garde la hauteur initiale (1100px) et crée un
-   vide blanc sous l'iframe avant la suite des éléments Streamlit. */
+/* Wrapper iframe → height auto (matche l'iframe redimensionnée par JS) */
 [data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]),
-[data-testid="stElementContainer"]:has(> iframe.stIFrame) {
-    height: auto !important;
-    min-height: 0 !important;
-    max-height: none !important;
-}
-/* Aussi les classes Emotion-CSS qu'on a déjà identifiées */
+[data-testid="stElementContainer"]:has(> iframe.stIFrame),
 .st-emotion-cache-4rsbii,
 .st-emotion-cache-fsrfgf {
     height: auto !important;
     min-height: 0 !important;
+    max-height: none !important;
+}
+
+/* SCROLL : force overflow-y:auto sur les conteneurs principaux Streamlit
+   (sinon Streamlit a parfois overflow:hidden qui bloque le scroll
+   quand on charge beaucoup d'éléments) */
+html, body,
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+[data-testid="stAppViewContainer"] {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    max-height: none !important;
 }
 </style>"""
     try:
@@ -1897,27 +1906,40 @@ def render_detail_page(biz: dict) -> None:
             label_visibility="collapsed",
         )
 
-    # ─────────────── AUDIT SEO : trigger Streamlit caché ─────────────────
-    # Le bouton VISIBLE est dans l'iframe (sous l'URL du site). Son onclick
-    # JS accède au DOM parent (iframe est same-origin via allow-same-origin)
-    # et clique ce bouton Streamlit caché, qui déclenche l'audit côté Python.
-    # CSS hide via .st-key-bd-hidden-audit-run (cf. _BUSINESS_DETAIL_CSS).
+    # ─────────────── AUDIT SEO : 2 triggers Streamlit cachés ─────────────
+    # Les boutons VISIBLES sont DANS l'iframe sidebar (sous l'URL du site).
+    # Leur onclick JS accède au DOM parent (iframe same-origin) et clique
+    # ces boutons Streamlit cachés, qui exécutent les actions Python.
+    #   1. "Lancer l'audit SEO" (si pas de cache) → run_full_audit
+    #   2. "Voir le rapport SEO & GEO" (si cache) → ouvre le dialog
     dedup = biz.get("dedup_key")
     cached_audit = get_seo_audit(dedup) if dedup and website else None
+
     if website:
+        # Trigger 1 : lancement de l'audit SEO
         with st.container(key="bd-hidden-audit-run"):
             if st.button("RUN_AUDIT_INTERNAL",
                          key=f"bd_run_audit_hidden_{safe_key}"):
-                # PAS de st.spinner ici (sinon le dialog se ferme à cause
-                # du re-rendu Streamlit pendant le spinner). PAS de st.rerun()
-                # non plus (idem). Le loader visuel est injecté DANS l'iframe
-                # par JS au clic du bouton audit-cta, et reste affiché tant
-                # que Python n'a pas fini. Quand on revient, l'iframe est
-                # régénéré naturellement avec le résumé d'audit.
                 res = run_full_audit(biz)
                 save_seo_audit(dedup, res)
                 res["_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                cached_audit = res  # reflet immédiat dans le rendu courant
+                cached_audit = res  # reflet immédiat
+
+        # Trigger 2 : ouverture du dialog du rapport SEO (si cache existe).
+        # On stocke d'abord les données dans st.session_state pour que la
+        # @st.dialog function puisse les lire après le clic.
+        if cached_audit and cached_audit.get("ai_report"):
+            st.session_state["_seo_report_md"] = cached_audit["ai_report"]
+            st.session_state["_seo_report_provider"] = {
+                "openai": "OpenAI",
+                "anthropic": "Anthropic Claude",
+            }.get((cached_audit.get("ai_report_meta") or {}).get("provider"), "IA")
+            st.session_state["_seo_report_biz_name"] = biz.get("name") or "Entreprise"
+
+            with st.container(key="bd-hidden-view-report-run"):
+                if st.button("VIEW_REPORT_INTERNAL",
+                             key=f"bd_view_report_hidden_{safe_key}"):
+                    _show_seo_report_dialog()
 
     # ─────────────── FICHE VISUELLE EN IFRAME (pixel-perfect template) ─────
     # Iframe avec CSS isolé + JS natif (tabs, accordéons).
@@ -1927,19 +1949,15 @@ def render_detail_page(biz: dict) -> None:
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
     _components_html(visual_html, height=1100, scrolling=True)
 
-    # ─────────────── RAPPORT SEO IA (structuré Media Fast) ────────────────
-    # Si un audit a été généré (cache ou via clic), on affiche son rapport
-    # markdown structuré JUSTE SOUS l'iframe. Format : POINTS FORTS /
-    # POINTS FAIBLES / PRÉSENCE LOCALE / PAGES LOCALES table / TOP 10
-    # MOTS-CLÉS / PLAN D'ACTION (avec emojis colorés rouge→bleu).
-    if cached_audit and cached_audit.get("ai_report"):
-        _render_seo_report_trigger(
-            cached_audit["ai_report"],
-            cached_audit.get("ai_report_meta"),
-            biz,
-        )
-    elif cached_audit and cached_audit.get("ai_report_meta") and not cached_audit["ai_report_meta"].get("ok"):
-        # Audit lancé mais IA pas configurée ou échoué : message info
+    # NB : Le bouton « Voir le rapport SEO & GEO » est DANS l'iframe sidebar
+    # (cf. _build_detail_visual_html). Son onclick clique le bouton
+    # Streamlit caché bd-hidden-view-report-run qui ouvre le dialog.
+    # Plus de trigger card sous l'iframe — tout passe par l'iframe.
+
+    # Si audit IA pas dispo (config manquante ou erreur), affiche info
+    if (cached_audit and cached_audit.get("ai_report_meta")
+            and not cached_audit["ai_report_meta"].get("ok")
+            and not cached_audit.get("ai_report")):
         msg = cached_audit["ai_report_meta"].get("message", "")
         st.info(f":material/info: Audit technique généré mais rapport IA non "
                 f"disponible : {msg}")
@@ -2370,23 +2388,36 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     website_block = ""
     if website:
         url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
-        # ─── Bouton audit-cta : onclick utilise launchAuditWithLoader() ───
-        # qui affiche un spinner sur le bouton + un placeholder en dessous
-        # AVANT de cliquer le bouton Streamlit caché en parent.
-        button_label = "Régénérer l'audit SEO" if cached_audit else "Lancer l'audit SEO du site"
-        audit_button_html = f'''
+        # ─── Bouton CTA : selon si audit cache OU pas ───
+        # PAS de cache → "Lancer l'audit SEO du site" (launchAuditWithLoader)
+        # AVEC cache  → "Voir le rapport SEO & GEO" (showSeoReportFromIframe)
+        # → un seul bouton visible à la fois, comme demandé par l'utilisateur
+        if cached_audit:
+            # Bouton « Voir le rapport SEO & GEO » (ouvre le dialog)
+            # onclick : clique le bouton Streamlit caché bd-hidden-view-report-run
+            audit_button_html = '''
+          <button onclick="(function(){var b=window.parent.document.querySelector('.st-key-bd-hidden-view-report-run button');if(b){b.click();}else{console.error('hidden view-report btn not found');}})()" class="audit-cta" type="button">
+            <span class="audit-cta__accent"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>Voir le rapport SEO &amp; GEO</span>
+          </button>'''
+        else:
+            # Bouton « Lancer l'audit SEO du site » (génère l'audit + loader)
+            audit_button_html = '''
           <button onclick="launchAuditWithLoader(this)" class="audit-cta" type="button">
             <span class="audit-cta__accent"></span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"/>
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            <span>{button_label}</span>
+            <span>Lancer l'audit SEO du site</span>
           </button>'''
 
-        # ─── Affichage compact de l'audit (sous le bouton, si cache) ───
-        # Minimal volontairement : score pill global + 2 sub-scores web/gmb.
-        # Le détail viendra avec le nouveau prompt utilisateur.
+        # ─── Affichage compact de l'audit (score) sous le bouton, si cache ───
+        # Reste affiché car c'est de l'info utile (score global + sub-scores)
+        # qu'on garde même quand on a déjà le bouton « Voir le rapport ».
         audit_summary_html = ""
         if cached_audit:
             audit_summary_html = _build_audit_summary_compact_html(cached_audit)
