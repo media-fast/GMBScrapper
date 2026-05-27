@@ -16,15 +16,23 @@ from enrichment.nbb import NbbData
 TODAY = date(2026, 5, 27)
 
 
-def _nbb(year=None, deposit_date=None, count=0, model_type=None) -> NbbData:
-    """Helper : construit un NbbData avec champs optionnels."""
+def _nbb(year=None, deposit_date=None, count=0, model_type=None,
+         available=None) -> NbbData:
+    """Helper : construit un NbbData avec champs optionnels.
+
+    Par défaut available=True dès qu'on a year ou deposit_date (i.e.
+    l'API a répondu utilement). Tu peux forcer available=True pour
+    simuler une réponse API vide (cas « pas de dépôt confirmé »).
+    """
+    if available is None:
+        available = bool(year or deposit_date)
     return NbbData(
         consult_url="https://consult.cbso.nbb.be/x",
         year=year,
         deposit_date=deposit_date,
         deposits_count=count,
         model_type=model_type,
-        available=bool(year or deposit_date),
+        available=available,
     )
 
 
@@ -89,18 +97,35 @@ class TestYoungCompany:
 
 
 class TestNoDeposit:
-    """Aucun dépôt BNB connu."""
+    """Aucun dépôt BNB connu — distingue le cas « API pas appelée » du
+    cas « API a répondu vide » (signal réel de prudence)."""
 
-    def test_no_deposit_and_old_company_is_orange(self):
+    def test_no_nbb_data_at_all_is_gray_with_api_hint(self):
+        # nbb_data=None → on n'a JAMAIS appelé l'API → gris (pas orange)
+        # avec un hint pour configurer NBB_API_KEY
         res = compute_credit_score(
             bce_status="Active",
             creation_date="2010-01-01",  # 16 ans
             nbb_data=None,
             today=TODAY,
         )
+        assert res.color == "gray"
+        assert any("non vérifié" in r.lower() or "non configur" in r.lower()
+                   or "nbb_api_key" in r.lower() for r in res.reasons)
+
+    def test_nbb_api_responded_with_no_deposit_is_orange(self):
+        # nbb_data.available=True mais pas de deposit_date/year → l'API
+        # a confirmé l'absence → vrai signal de prudence ORANGE.
+        nbb = _nbb(year=None, deposit_date=None, count=0)
+        nbb.available = True  # API a répondu, juste pas de dépôt
+        res = compute_credit_score(
+            bce_status="Active",
+            creation_date="2010-01-01",
+            nbb_data=nbb,
+            today=TODAY,
+        )
         assert res.color == "orange"
         assert any("Aucun dépôt" in r for r in res.reasons)
-        assert any("transparence" in r.lower() for r in res.reasons)
 
     def test_no_deposit_no_age_no_status_falls_back_to_gray(self):
         # Aucune donnée du tout → gris (on ne peut rien dire)
@@ -109,8 +134,7 @@ class TestNoDeposit:
 
     def test_no_deposit_with_status_only_falls_back_to_gray(self):
         # Statut Active mais pas d'âge ni de dépôt : impossible de juger
-        # si l'absence de dépôt est anormale → gris (changé en avril 2026
-        # pour éviter la dérive orange systématique)
+        # si l'absence de dépôt est anormale → gris
         res = compute_credit_score(bce_status="Active", nbb_data=None,
                                    today=TODAY)
         assert res.color == "gray"
@@ -195,6 +219,7 @@ class TestYearOnlyApproximation:
 
     def test_year_only_very_old_is_orange(self):
         nbb = _nbb(year="2020", deposit_date=None, count=2)
+        nbb.available = True  # l'API a répondu avec une vieille année
         res = compute_credit_score(
             bce_status="Active",
             creation_date="2010-01-01",
@@ -211,15 +236,17 @@ class TestFrenchDateParsing:
     toutes les fiches glissent en gris — back-fill inutilisable."""
 
     def test_fr_date_recognized_for_old_company(self):
-        # Créée il y a >15 ans, statut actif, pas de NBB → orange
+        # Créée il y a >15 ans, statut actif, pas de NBB → gris avec hint
+        # (avant la correction « no penalty without API », était orange)
         res = compute_credit_score(
             bce_status="Actif",
             creation_date="29 octobre 2009",
             nbb_data=None,
             today=TODAY,
         )
-        assert res.color == "orange"
-        assert any("Aucun dépôt" in r for r in res.reasons)
+        assert res.color == "gray"
+        assert any("non vérifié" in r.lower() or "nbb_api_key" in r.lower()
+                   for r in res.reasons)
 
     def test_fr_date_young_company(self):
         # Créée il y a quelques mois → gris

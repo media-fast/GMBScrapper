@@ -201,18 +201,40 @@ def compute_credit_score(
             "de recul pour évaluer la régularité des dépôts",
         ])
 
-    # ── 5. Cas : aucun dépôt BNB connu ──
+    # ── 5. Cas : aucune date de dépôt récupérée ──
+    # ⚠ CRITICAL : on ne peut PAS conclure « pas de dépôt » uniquement
+    # parce qu'on n'a pas la donnée. Deux causes très différentes :
+    #   (a) NBB_API_KEY non configurée → l'API n'a jamais été appelée,
+    #       les dépôts existent peut-être réellement sur consult.cbso.nbb.be
+    #   (b) NBB_API_KEY configurée + appel API confirmant l'absence
+    #       de dépôt → vrai signal de prudence
+    #
+    # nbb_data=None ou nbb_data.available=False = cas (a) → GRIS avec hint
+    # nbb_data fourni mais sans deposit_date/year = cas (b) → ORANGE
+    #
+    # En pratique, fetch_nbb_financials renvoie systématiquement un NbbData
+    # mais available=False si pas de clé. On utilise ce flag pour
+    # distinguer les deux cas.
     if months_since_deposit is None:
-        # Si l'entreprise a plus de 24 mois et n'a JAMAIS déposé → orange
-        # (obligation légale en Belgique pour la plupart des sociétés)
+        api_was_queried = bool(nbb_data and nbb_data.available)
+
+        if not api_was_queried:
+            # Cas (a) : on ne sait juste pas. Pas de pénalité.
+            return _verdict("gray", [
+                "Dépôts BNB non vérifiés — clé API non configurée",
+                "Configure NBB_API_KEY (gratuit sur "
+                "developer.cbso.nbb.be) pour activer le scoring fiable",
+            ])
+
+        # Cas (b) : API a répondu mais aucune date de dépôt. Là c'est
+        # un vrai signal — l'entreprise n'a effectivement rien déposé.
         if age_months is not None and age_months >= 24:
-            reasons = [
+            return _verdict("orange", [
                 "Aucun dépôt de comptes annuels trouvé à la BNB",
-                f"Entreprise créée il y a {age_months // 12} an(s) — les "
-                "dépôts auraient dû être faits",
+                f"Entreprise créée il y a {age_months // 12} an(s) — "
+                "les dépôts auraient dû être faits",
                 "Manque de transparence financière — signal de prudence",
-            ]
-            return _verdict("orange", reasons)
+            ])
         # Âge inconnu ou pas assez de recul → gris (on ne sait pas si
         # l'absence de dépôt est anormale)
         return _verdict("gray", ["Pas de données financières BNB disponibles"])
