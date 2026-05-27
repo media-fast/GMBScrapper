@@ -48,6 +48,13 @@ class Business:
     companyweb_url: Optional[str] = None
     companyweb_score: Optional[str] = None
 
+    # Scoring crédit heuristique (enrichment/credit_score.py)
+    credit_color: Optional[str] = None        # red/orange/yellow/green/gray
+    credit_score: Optional[int] = None        # 0-100
+    credit_label: Optional[str] = None        # libellé FR
+    credit_reasons: Optional[str] = None      # JSON-encoded list[str]
+    credit_computed_at: Optional[str] = None  # timestamp
+
     # Historique / déduplication
     already_seen: bool = False
     first_seen: Optional[str] = None

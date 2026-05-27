@@ -1119,6 +1119,51 @@ def _status_chip_html(status: str) -> str:
     )
 
 
+# Mapping couleur crédit → palette pill (bg, fg, icone lucide)
+# Mêmes couleurs que les autres composants Oui Allo (palette violet/ambre/jade)
+_CREDIT_PILL_STYLES = {
+    "red":    ("#FEE2E2", "#991B1B", "octagon-alert"),
+    "orange": ("#FFEDD5", "#9A3412", "triangle-alert"),
+    "yellow": ("#FEF3C7", "#854D0E", "circle-alert"),
+    "green":  ("#DCFCE7", "#166534", "shield-check"),
+    "gray":   ("#F1F5F9", "#475569", "circle-help"),
+}
+
+
+def _credit_pill_html(biz: dict) -> str:
+    """Rend la pastille crédit colorée (rouge/orange/jaune/vert/gris).
+
+    Lit `credit_color` + `credit_label` + `credit_reasons` (JSON) depuis le
+    dict d'entreprise. Affiche la pastille + tooltip natif (title attribute)
+    avec les raisons concaténées.
+
+    Renvoie une chaîne vide si aucun scoring n'a été calculé (ex : fiches
+    pré-existantes en DB avant la mise à jour, ou fiches sans BCE).
+    """
+    color = biz.get("credit_color")
+    if not color or color not in _CREDIT_PILL_STYLES:
+        return ""
+    bg, fg, icon = _CREDIT_PILL_STYLES[color]
+    label = biz.get("credit_label") or color.upper()
+    # Tooltip : raisons jointes (HTML-escape pour title attr)
+    reasons_raw = biz.get("credit_reasons") or "[]"
+    try:
+        import json as _json
+        reasons = _json.loads(reasons_raw) if isinstance(reasons_raw, str) else reasons_raw
+    except Exception:
+        reasons = []
+    if not isinstance(reasons, list):
+        reasons = []
+    tooltip = " · ".join(str(r) for r in reasons).replace('"', '&quot;')
+    return (
+        f'<span title="{tooltip}" style="display:inline-flex;align-items:center;'
+        f'gap:5px;background:{bg};color:{fg};padding:3px 10px;'
+        f'border-radius:999px;font-size:0.75rem;font-weight:600;'
+        f'letter-spacing:0.01em;cursor:help;">'
+        f'{lucide(icon, 12, fg, 2.2)}<span>{label}</span></span>'
+    )
+
+
 def _rank_badge_html(rank) -> str:
     if rank == 1:
         return ('<span style="display:inline-flex;align-items:center;gap:5px;'
@@ -1934,6 +1979,76 @@ html, body,
 # Rendu via st.components.v1.html() dans un iframe isolé → zéro interférence
 # avec le CSS de Streamlit/BaseWeb.
 
+# Mapping couleur crédit → palette pour les blocs iframe (cohérent avec
+# _CREDIT_PILL_STYLES côté grille principale, mais utilise les variables
+# CSS du theme iframe Oui Allo).
+_CREDIT_BLOCK_PALETTE = {
+    "red":    {"bg": "#FEE2E2", "fg": "#991B1B", "accent": "#DC2626",
+               "icon": '<polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'},
+    "orange": {"bg": "#FFEDD5", "fg": "#9A3412", "accent": "#EA580C",
+               "icon": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'},
+    "yellow": {"bg": "#FEF3C7", "fg": "#854D0E", "accent": "#CA8A04",
+               "icon": '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'},
+    "green":  {"bg": "#DCFCE7", "fg": "#166534", "accent": "#16A34A",
+               "icon": '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>'},
+    "gray":   {"bg": "#F1F5F9", "fg": "#475569", "accent": "#64748B",
+               "icon": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>'},
+}
+
+
+def _build_credit_health_block_html(biz: dict) -> str:
+    """Bloc « Santé financière » pour la sidebar iframe.
+
+    Affiche la pastille couleur (rouge/orange/jaune/vert/gris) + la liste
+    des raisons en puces. Rend vide si aucun scoring n'a été calculé.
+    """
+    color = biz.get("credit_color")
+    if not color or color not in _CREDIT_BLOCK_PALETTE:
+        return ""
+    pal = _CREDIT_BLOCK_PALETTE[color]
+    label = biz.get("credit_label") or color.upper()
+    reasons_raw = biz.get("credit_reasons") or "[]"
+    try:
+        import json as _json
+        reasons = _json.loads(reasons_raw) if isinstance(reasons_raw, str) else reasons_raw
+    except Exception:
+        reasons = []
+    if not isinstance(reasons, list):
+        reasons = []
+    reasons_html = ""
+    if reasons:
+        items = "".join(
+            f'<li style="margin: 4px 0; font-size: 12px; color: var(--ink-700); '
+            f'line-height: 1.45;">{_safe_html(str(r))}</li>'
+            for r in reasons[:4]
+        )
+        reasons_html = (
+            f'<ul style="margin: 8px 0 0 0; padding-left: 18px;">{items}</ul>'
+        )
+
+    return f'''
+        <div style="margin-top: 12px; padding: 12px 14px; background: var(--cream);
+                    border-radius: 11px; border: 1px solid var(--ink-100);">
+          <div style="display: flex; align-items: center; justify-content: space-between;
+                      gap: 10px; margin-bottom: 4px;">
+            <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+                        text-transform: uppercase; color: var(--ink-500);">
+              Santé financière
+            </div>
+            <span style="display: inline-flex; align-items: center; gap: 5px;
+                         background: {pal["bg"]}; color: {pal["fg"]};
+                         padding: 3px 10px; border-radius: 999px;
+                         font-size: 11px; font-weight: 700;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round" stroke-linejoin="round">{pal["icon"]}</svg>
+              {_safe_html(label)}
+            </span>
+          </div>
+          {reasons_html}
+        </div>'''
+
+
 def _build_audit_summary_compact_html(audit: dict) -> str:
     """Affichage compact de l'audit SEO pour la sidebar iframe.
 
@@ -2386,6 +2501,9 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
         # Généré le … » sous le bouton — demande explicite utilisateur.
         # Le bouton « Voir le rapport SEO & GEO » suffit.
 
+        # ─── Bloc santé financière (pastille crédit + raisons) ───
+        credit_health_html = _build_credit_health_block_html(biz)
+
         website_block = f'''
         <div class="website-block">
           <a href="{_safe_html(website)}" target="_blank" class="website-block__main">
@@ -2402,6 +2520,7 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
             </div>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
           </a>
+          {credit_health_html}
           {audit_button_html}
         </div>'''
 
@@ -4348,7 +4467,14 @@ def render_business_card(biz: dict, key_suffix: str = "") -> None:
         if sub:
             st.caption(sub)
 
-        st.markdown(_status_chip_html(status), unsafe_allow_html=True)
+        # Status chip + pastille crédit côte à côte sur la même ligne
+        credit_pill = _credit_pill_html(biz)
+        st.markdown(
+            f'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+            f'{_status_chip_html(status)}{credit_pill}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
         # Bloc d'infos compactes
         BRAND = "#7c3aed"
