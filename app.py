@@ -1362,40 +1362,321 @@ def _render_audit_card(audit: dict, generated_at: str = None) -> str:
     )
 
 
-def _render_seo_report_card(report_markdown: str, meta: dict | None = None) -> None:
-    """Affiche le rapport SEO IA structuré sous l'iframe de la fiche détail.
+def _render_seo_report_trigger(report_markdown: str, meta: dict | None = None,
+                                biz: dict | None = None) -> None:
+    """Affiche un BOUTON premium « Voir le rapport SEO complet » qui ouvre
+    le dialog popup avec le rapport markdown stylé.
 
-    Le rapport markdown est rendu dans une carte stylée Oui Allo, avec
-    badge IA en haut + meta info (provider, generated_at) en bas.
+    Stocke le rapport dans st.session_state pour qu'il soit accessible
+    depuis la dialog function (qui est appelée par clic + n'a pas accès
+    aux paramètres directement).
     """
     provider = (meta or {}).get("provider") or "ia"
     provider_label = {
         "openai": "OpenAI",
         "anthropic": "Anthropic Claude",
     }.get(provider, "IA")
+    biz_name = (biz or {}).get("name") or "Entreprise"
 
-    # Header de section + carte avec le markdown rendu nativement par Streamlit
-    # (les # ## ### + tableaux + emojis 🔴🟠🟡🟢🔵 marchent natifs).
+    # Stocke pour usage par la dialog
+    st.session_state["_seo_report_md"] = report_markdown
+    st.session_state["_seo_report_provider"] = provider_label
+    st.session_state["_seo_report_biz_name"] = biz_name
+
+    # Trigger card : annonce visuelle + bouton « Voir le rapport »
     st.markdown(
-        '<div style="margin-top:1.5rem;margin-bottom:0.8rem;'
-        'display:flex;align-items:center;gap:10px;">'
-        '<div style="width:8px;height:8px;border-radius:999px;'
-        'background:#E8A838;box-shadow:0 0 0 4px rgba(232,168,56,0.25);"></div>'
-        '<div style="font-size:0.78rem;font-weight:700;letter-spacing:0.08em;'
-        'text-transform:uppercase;color:#3425AF;">'
-        'Rapport SEO & GEO — Media Fast'
+        '<div style="margin-top: 1.4rem; padding: 18px 22px; '
+        'background: linear-gradient(135deg, #F5F4FF 0%, #FBF9F4 100%); '
+        'border: 1px solid #EAE7FF; border-radius: 14px; '
+        'display: flex; align-items: center; gap: 16px; '
+        'box-shadow: 0 2px 8px rgba(79, 63, 240, 0.06);">'
+        '<div style="width: 44px; height: 44px; border-radius: 12px; '
+        'background: linear-gradient(135deg, #1A0E5C, #3425AF); '
+        'display: grid; place-items: center; color: white; flex-shrink: 0;">'
+        '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
         '</div>'
-        '<div style="margin-left:auto;font-size:0.7rem;color:#8C8AAE;">'
-        f'Généré par {_safe_html(provider_label)}'
+        '<div style="flex: 1;">'
+        '<div style="font-weight: 700; color: #0E0B2E; font-size: 15px; '
+        'margin-bottom: 2px;">Rapport SEO & GEO disponible</div>'
+        f'<div style="font-size: 12px; color: #6B6890;">'
+        f'Audit complet du site web · Généré par <strong style="color: #3425AF;">{_safe_html(provider_label)}</strong>'
+        '</div>'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    # Carte container : fond paper, border indigo-100, padding généreux,
-    # ombre douce. Le markdown est rendu dedans avec st.markdown.
-    with st.container(border=True):
-        st.markdown(report_markdown)
+    with st.container(key="bd-seo-report-cta"):
+        if st.button("Voir le rapport SEO complet",
+                     key="bd_open_seo_report",
+                     type="primary",
+                     width="stretch"):
+            _show_seo_report_dialog()
+
+
+# ============================================================================
+# POPUP DIALOG : Rapport SEO & GEO Media Fast — design premium
+# ============================================================================
+
+_SEO_REPORT_DIALOG_CSS = """
+<style>
+/* Tout est scopé sous .sr-root (seo-report root) */
+.sr-root {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Header gradient Media Fast en haut du dialog */
+.sr-header {
+  margin: -8px -12px 18px;
+  padding: 22px 26px;
+  background: linear-gradient(135deg, #1A0E5C 0%, #3425AF 60%, #4F3FF0 100%);
+  border-radius: 14px 14px 0 0;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+.sr-header::after {
+  content: '';
+  position: absolute; right: -40px; top: -40px;
+  width: 160px; height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232,168,56,0.3), transparent 70%);
+}
+.sr-header__brand {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; opacity: 0.85;
+  margin-bottom: 8px;
+}
+.sr-header__brand-dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  background: #E8A838;
+  box-shadow: 0 0 0 3px rgba(232,168,56,0.3);
+}
+.sr-header__title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 22px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1.2;
+  margin: 0;
+}
+.sr-header__sub {
+  font-size: 13px; opacity: 0.85;
+  margin-top: 4px;
+}
+
+/* Markdown content styling — scopé pour ne pas affecter le reste de la page */
+.sr-content h3 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #0E0B2E !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  margin: 24px 0 14px !important;
+  background: linear-gradient(90deg, #F5F4FF, transparent);
+  border-left: 4px solid #4F3FF0;
+  border-radius: 0 8px 8px 0;
+}
+.sr-content h3:first-child { margin-top: 0 !important; }
+
+/* Différencier visuellement Points Forts vs Points Faibles via emoji prefix */
+.sr-content h3:has-text("POINTS FORTS"),
+.sr-content h3.points-forts {
+  border-left-color: #0F9D58;
+  background: linear-gradient(90deg, #E6F7EE, transparent);
+}
+.sr-content h3:has-text("POINTS FAIBLES"),
+.sr-content h3.points-faibles {
+  border-left-color: #D33B3B;
+  background: linear-gradient(90deg, #FDECEC, transparent);
+}
+.sr-content h3:has-text("PRÉSENCE LOCALE"),
+.sr-content h3.presence {
+  border-left-color: #B5740A;
+  background: linear-gradient(90deg, #FFF6E5, transparent);
+}
+.sr-content h3:has-text("PAGES LOCALES"),
+.sr-content h3.pages-locales {
+  border-left-color: #3425AF;
+  background: linear-gradient(90deg, #EAE7FF, transparent);
+}
+.sr-content h3:has-text("TOP 10 MOTS"),
+.sr-content h3.mots-cles {
+  border-left-color: #4F3FF0;
+  background: linear-gradient(90deg, #F5F4FF, transparent);
+}
+.sr-content h3:has-text("PLAN D"),
+.sr-content h3.plan-action {
+  border-left-color: #E8A838;
+  background: linear-gradient(90deg, rgba(232,168,56,0.15), transparent);
+}
+
+/* Listes : puces stylées */
+.sr-content ul,
+.sr-content ol {
+  padding-left: 1.4rem !important;
+  margin: 8px 0 14px !important;
+}
+.sr-content ul li,
+.sr-content ol li {
+  font-size: 14px !important;
+  color: #2C2A4A !important;
+  line-height: 1.6 !important;
+  padding-left: 4px;
+  margin-bottom: 4px !important;
+}
+
+/* Tables : pages locales — design propre */
+.sr-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 16px;
+  background: white;
+  border-radius: 11px;
+  overflow: hidden;
+  border: 1px solid #EAE7FF;
+  box-shadow: 0 2px 8px rgba(26, 14, 92, 0.04);
+}
+.sr-content table th {
+  background: linear-gradient(135deg, #1A0E5C, #3425AF);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 12px 14px;
+  text-align: left;
+  border: none;
+}
+.sr-content table td {
+  padding: 11px 14px;
+  font-size: 13px;
+  color: #2C2A4A;
+  border-top: 1px solid #F0EDFF;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+}
+.sr-content table tr:nth-child(even) td { background: #FBF9F4; }
+.sr-content table tr:hover td { background: #F5F4FF; }
+.sr-content table td:first-child {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #3425AF;
+  font-weight: 600;
+}
+
+/* Paragraphes : texte body confortable */
+.sr-content p {
+  font-size: 14px !important;
+  color: #2C2A4A !important;
+  line-height: 1.65 !important;
+  margin: 8px 0 !important;
+}
+
+/* Strong / em */
+.sr-content strong { color: #0E0B2E !important; font-weight: 700 !important; }
+.sr-content em { color: #6B6890 !important; }
+
+/* Séparateurs horizontaux */
+.sr-content hr {
+  margin: 22px 0;
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #E3E1F0, transparent);
+}
+
+/* Plan d'action : les puces colorées du markdown sont déjà des emojis,
+   on ajoute juste un fond subtil sur ces paragraphes */
+.sr-content p:has(strong):first-letter { font-size: inherit; }
+
+/* Footer */
+.sr-footer {
+  margin-top: 20px;
+  padding: 14px 18px;
+  background: #FBF9F4;
+  border: 1px solid #EFEDF7;
+  border-radius: 11px;
+  font-size: 11px;
+  color: #6B6890;
+  text-align: center;
+}
+.sr-footer strong { color: #1A0E5C; }
+.sr-footer a { color: #4F3FF0; text-decoration: none; font-weight: 600; }
+.sr-footer a:hover { text-decoration: underline; }
+</style>
+"""
+
+
+@st.dialog("Rapport SEO & GEO — Media Fast", width="large")
+def _show_seo_report_dialog() -> None:
+    """Affiche le rapport SEO IA dans un popup premium stylé.
+
+    Lit le rapport depuis st.session_state (rempli par
+    _render_seo_report_trigger avant l'ouverture).
+    """
+    report_md = st.session_state.get("_seo_report_md", "")
+    provider_label = st.session_state.get("_seo_report_provider", "IA")
+    biz_name = st.session_state.get("_seo_report_biz_name", "Entreprise")
+
+    # CSS scopée pour le dialog (ré-injectée dans le portal du dialog)
+    try:
+        st.html(_SEO_REPORT_DIALOG_CSS)
+    except AttributeError:
+        st.markdown(_SEO_REPORT_DIALOG_CSS, unsafe_allow_html=True)
+
+    # Header premium Media Fast
+    st.markdown(
+        '<div class="sr-root">'
+        '<div class="sr-header">'
+        '<div class="sr-header__brand">'
+        '<span class="sr-header__brand-dot"></span>'
+        '<span>Media Fast · Audit SEO & GEO</span>'
+        '</div>'
+        f'<h1 class="sr-header__title">{_safe_html(biz_name)}</h1>'
+        f'<div class="sr-header__sub">Rapport généré par {_safe_html(provider_label)}</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Contenu du rapport — markdown rendu nativement par Streamlit
+    # avec CSS stylée via .sr-content
+    if report_md:
+        # Strip le header dupliqué dans le markdown (commence par
+        # **Audit SEO & GEO — [Nom] — Réalisé par Media Fast**)
+        # → on a déjà notre header premium au dessus.
+        import re as _re
+        cleaned_md = _re.sub(
+            r'^\s*\*\*Audit SEO[^*]+\*\*\s*\n+(?:---\s*\n+)?',
+            '', report_md, flags=_re.IGNORECASE,
+        )
+        # Strip aussi le footer markdown (commence par *Rapport réalisé par)
+        cleaned_md = _re.sub(
+            r'\n+---\s*\n+\*Rapport réalisé par.+$',
+            '', cleaned_md, flags=_re.DOTALL | _re.IGNORECASE,
+        )
+
+        st.markdown(
+            f'<div class="sr-root sr-content">\n\n{cleaned_md}\n\n</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("Rapport vide. Relancer l'audit pour le régénérer.")
+
+    # Footer Media Fast (toujours affiché, même si markdown ne l'a pas)
+    st.markdown(
+        '<div class="sr-root">'
+        '<div class="sr-footer">'
+        'Rapport réalisé par <strong>Media Fast</strong> — '
+        '<a href="mailto:contact@media-fast.be">contact@media-fast.be</a>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_seo_audit_section(biz: dict) -> None:
@@ -1645,7 +1926,11 @@ def render_detail_page(biz: dict) -> None:
     # POINTS FAIBLES / PRÉSENCE LOCALE / PAGES LOCALES table / TOP 10
     # MOTS-CLÉS / PLAN D'ACTION (avec emojis colorés rouge→bleu).
     if cached_audit and cached_audit.get("ai_report"):
-        _render_seo_report_card(cached_audit["ai_report"], cached_audit.get("ai_report_meta"))
+        _render_seo_report_trigger(
+            cached_audit["ai_report"],
+            cached_audit.get("ai_report_meta"),
+            biz,
+        )
     elif cached_audit and cached_audit.get("ai_report_meta") and not cached_audit["ai_report_meta"].get("ok"):
         # Audit lancé mais IA pas configurée ou échoué : message info
         msg = cached_audit["ai_report_meta"].get("message", "")
