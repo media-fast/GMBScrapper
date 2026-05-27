@@ -2388,11 +2388,15 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
     website_block = ""
     if website:
         url_display = website.replace("https://", "").replace("http://", "").rstrip("/")
-        # ─── Bouton CTA : selon si audit cache OU pas ───
-        # PAS de cache → "Lancer l'audit SEO du site" (launchAuditWithLoader)
-        # AVEC cache  → "Voir le rapport SEO & GEO" (showSeoReportFromIframe)
-        # → un seul bouton visible à la fois, comme demandé par l'utilisateur
-        if cached_audit:
+        # ─── Bouton CTA : selon si rapport IA disponible OU pas ───
+        # PAS de rapport IA → "Lancer l'audit SEO du site" (launchAuditWithLoader)
+        # AVEC rapport IA   → "Voir le rapport SEO & GEO" (ouvre le dialog)
+        # → un seul bouton visible à la fois, comme demandé par l'utilisateur.
+        # On vérifie explicitement `ai_report` (et pas juste l'existence du
+        # cache) pour ne PAS afficher un bouton non fonctionnel sur d'anciens
+        # audits qui n'ont pas généré de rapport IA.
+        has_ai_report = bool(cached_audit and cached_audit.get("ai_report"))
+        if has_ai_report:
             # Bouton « Voir le rapport SEO & GEO » (ouvre le dialog)
             # onclick : clique le bouton Streamlit caché bd-hidden-view-report-run
             audit_button_html = '''
@@ -2415,12 +2419,9 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
             <span>Lancer l'audit SEO du site</span>
           </button>'''
 
-        # ─── Affichage compact de l'audit (score) sous le bouton, si cache ───
-        # Reste affiché car c'est de l'info utile (score global + sub-scores)
-        # qu'on garde même quand on a déjà le bouton « Voir le rapport ».
-        audit_summary_html = ""
-        if cached_audit:
-            audit_summary_html = _build_audit_summary_compact_html(cached_audit)
+        # NOTE : on n'affiche PLUS le bloc compact « Audit SEO XX/100 Web/GMB
+        # Généré le … » sous le bouton — demande explicite utilisateur.
+        # Le bouton « Voir le rapport SEO & GEO » suffit.
 
         website_block = f'''
         <div class="website-block">
@@ -2439,7 +2440,6 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-400);"><path d="M7 17L17 7M7 7h10v10"/></svg>
           </a>
           {audit_button_html}
-          {audit_summary_html}
         </div>'''
 
     address_block = ""
