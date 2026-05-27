@@ -102,10 +102,18 @@ class TestNoDeposit:
         assert any("Aucun dépôt" in r for r in res.reasons)
         assert any("transparence" in r.lower() for r in res.reasons)
 
-    def test_no_deposit_no_age_falls_back_to_orange(self):
-        # Pas d'info sur la création → on suppose entreprise établie
+    def test_no_deposit_no_age_no_status_falls_back_to_gray(self):
+        # Aucune donnée du tout → gris (on ne peut rien dire)
         res = compute_credit_score(nbb_data=None, today=TODAY)
-        assert res.color == "orange"
+        assert res.color == "gray"
+
+    def test_no_deposit_with_status_only_falls_back_to_gray(self):
+        # Statut Active mais pas d'âge ni de dépôt : impossible de juger
+        # si l'absence de dépôt est anormale → gris (changé en avril 2026
+        # pour éviter la dérive orange systématique)
+        res = compute_credit_score(bce_status="Active", nbb_data=None,
+                                   today=TODAY)
+        assert res.color == "gray"
 
 
 class TestLateDeposit:
@@ -195,6 +203,34 @@ class TestYearOnlyApproximation:
         )
         # 2020 → dépôt approx 2021-07 → ~58 mois avant TODAY → orange
         assert res.color == "orange"
+
+
+class TestFrenchDateParsing:
+    """Le format BCE renvoie souvent des dates textuelles françaises
+    comme « 29 octobre 2009 ». Sans parsing FR, l'âge tombe à None et
+    toutes les fiches glissent en gris — back-fill inutilisable."""
+
+    def test_fr_date_recognized_for_old_company(self):
+        # Créée il y a >15 ans, statut actif, pas de NBB → orange
+        res = compute_credit_score(
+            bce_status="Actif",
+            creation_date="29 octobre 2009",
+            nbb_data=None,
+            today=TODAY,
+        )
+        assert res.color == "orange"
+        assert any("Aucun dépôt" in r for r in res.reasons)
+
+    def test_fr_date_young_company(self):
+        # Créée il y a quelques mois → gris
+        res = compute_credit_score(
+            bce_status="Actif",
+            creation_date="15 mars 2026",  # 2 mois avant TODAY
+            nbb_data=None,
+            today=TODAY,
+        )
+        assert res.color == "gray"
+        assert any("jeune" in r.lower() for r in res.reasons)
 
 
 class TestSerializationAndShape:
