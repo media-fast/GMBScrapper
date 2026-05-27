@@ -1362,6 +1362,42 @@ def _render_audit_card(audit: dict, generated_at: str = None) -> str:
     )
 
 
+def _render_seo_report_card(report_markdown: str, meta: dict | None = None) -> None:
+    """Affiche le rapport SEO IA structuré sous l'iframe de la fiche détail.
+
+    Le rapport markdown est rendu dans une carte stylée Oui Allo, avec
+    badge IA en haut + meta info (provider, generated_at) en bas.
+    """
+    provider = (meta or {}).get("provider") or "ia"
+    provider_label = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic Claude",
+    }.get(provider, "IA")
+
+    # Header de section + carte avec le markdown rendu nativement par Streamlit
+    # (les # ## ### + tableaux + emojis 🔴🟠🟡🟢🔵 marchent natifs).
+    st.markdown(
+        '<div style="margin-top:1.5rem;margin-bottom:0.8rem;'
+        'display:flex;align-items:center;gap:10px;">'
+        '<div style="width:8px;height:8px;border-radius:999px;'
+        'background:#E8A838;box-shadow:0 0 0 4px rgba(232,168,56,0.25);"></div>'
+        '<div style="font-size:0.78rem;font-weight:700;letter-spacing:0.08em;'
+        'text-transform:uppercase;color:#3425AF;">'
+        'Rapport SEO & GEO — Media Fast'
+        '</div>'
+        '<div style="margin-left:auto;font-size:0.7rem;color:#8C8AAE;">'
+        f'Généré par {_safe_html(provider_label)}'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Carte container : fond paper, border indigo-100, padding généreux,
+    # ombre douce. Le markdown est rendu dedans avec st.markdown.
+    with st.container(border=True):
+        st.markdown(report_markdown)
+
+
 def _render_seo_audit_section(biz: dict) -> None:
     """Affiche/lance l'audit SEO complet (site web + GMB)."""
     dedup = biz.get("dedup_key")
@@ -1602,6 +1638,19 @@ def render_detail_page(biz: dict) -> None:
     # scroller dans l'iframe.
     visual_html = _build_detail_visual_html(biz, cached_audit=cached_audit)
     _components_html(visual_html, height=1800, scrolling=True)
+
+    # ─────────────── RAPPORT SEO IA (structuré Media Fast) ────────────────
+    # Si un audit a été généré (cache ou via clic), on affiche son rapport
+    # markdown structuré JUSTE SOUS l'iframe. Format : POINTS FORTS /
+    # POINTS FAIBLES / PRÉSENCE LOCALE / PAGES LOCALES table / TOP 10
+    # MOTS-CLÉS / PLAN D'ACTION (avec emojis colorés rouge→bleu).
+    if cached_audit and cached_audit.get("ai_report"):
+        _render_seo_report_card(cached_audit["ai_report"], cached_audit.get("ai_report_meta"))
+    elif cached_audit and cached_audit.get("ai_report_meta") and not cached_audit["ai_report_meta"].get("ok"):
+        # Audit lancé mais IA pas configurée ou échoué : message info
+        msg = cached_audit["ai_report_meta"].get("message", "")
+        st.info(f":material/info: Audit technique généré mais rapport IA non "
+                f"disponible : {msg}")
 
 
 # ===========================================================================
