@@ -1,3 +1,4 @@
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
@@ -6,8 +7,9 @@ from scraper.models import Business
 
 from .bce_detail import fetch_bce_detail
 from .companyweb import companyweb_url, fetch_companyweb_score
+from .credit_score import compute_credit_score
 from .kbo import lookup_vat_via_kbo
-from .nbb import fetch_nbb_financials, nbb_consult_url
+from .nbb import NbbData, fetch_nbb_financials, nbb_consult_url
 from .website import fetch_website_contact
 
 
@@ -55,6 +57,29 @@ def _enrich_financial(business: Business) -> None:
     cw = fetch_companyweb_score(business.bce_number)
     if cw.available:
         business.companyweb_score = cw.score
+
+    # ── Scoring crédit heuristique (rouge/orange/jaune/vert/gris) ──
+    # Toujours calculé, même si NBB n'a rien renvoyé : le statut BCE et
+    # l'ancienneté donnent déjà des signaux exploitables.
+    _apply_credit_score(business, nbb)
+
+
+def _apply_credit_score(business: Business, nbb: Optional[NbbData]) -> None:
+    """Calcule et applique le verdict baromètre crédit sur le Business.
+
+    Stocke `credit_reasons` en JSON pour préserver la liste à travers le
+    round-trip dataclass → DB → dict.
+    """
+    score = compute_credit_score(
+        bce_status=business.bce_status,
+        creation_date=business.creation_date,
+        nbb_data=nbb,
+    )
+    business.credit_color = score.color
+    business.credit_score = score.score
+    business.credit_label = score.label
+    business.credit_reasons = json.dumps(score.reasons, ensure_ascii=False)
+    business.credit_computed_at = score.computed_at
 
 
 def enrich_business_with_vat(

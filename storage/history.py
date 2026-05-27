@@ -98,6 +98,12 @@ MIGRATION_COLUMNS = {
     "ai_briefing_at": "TEXT",     # timestamp dernière génération
     "seo_audit": "TEXT",          # JSON-encoded audit SEO (website + GMB)
     "seo_audit_at": "TEXT",       # timestamp dernier audit
+    # Scoring crédit heuristique (enrichment/credit_score.py)
+    "credit_color": "TEXT",       # red / orange / yellow / green / gray
+    "credit_score": "INTEGER",    # 0-100 (plus haut = mieux)
+    "credit_label": "TEXT",       # libellé FR humain (« Bon payeur », etc.)
+    "credit_reasons": "TEXT",     # JSON-encoded list[str]
+    "credit_computed_at": "TEXT", # timestamp du calcul
 }
 
 # Champs persistés pour chaque entreprise (lus depuis Business.to_dict())
@@ -110,6 +116,8 @@ BUSINESS_PERSISTED_FIELDS = [
     "rating", "reviews_count", "hours", "gmaps_url", "plus_code",
     "nbb_url", "nbb_year", "nbb_revenue", "nbb_equity", "nbb_employees",
     "companyweb_url", "companyweb_score",
+    "credit_color", "credit_score", "credit_label", "credit_reasons",
+    "credit_computed_at",
 ]
 
 
