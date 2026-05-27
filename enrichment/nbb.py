@@ -45,7 +45,8 @@ def nbb_consult_url(bce: str) -> str:
     return CONSULT_BASE + d if len(d) == 10 else CONSULT_BASE
 
 
-def fetch_nbb_financials(bce: str, api_key: Optional[str] = None) -> NbbData:
+def fetch_nbb_financials(bce: str, api_key: Optional[str] = None,
+                         allow_scraping: bool = False) -> NbbData:
     """Récupère les métadonnées du dernier dépôt BNB pour une entreprise.
 
     Renvoie systématiquement le `consult_url` (lien public, sans clé). Si une
@@ -55,6 +56,12 @@ def fetch_nbb_financials(bce: str, api_key: Optional[str] = None) -> NbbData:
       - la date de dépôt (`deposit_date`, format YYYY-MM-DD)
       - le type de modèle (FULL/ABBREVIATED/MICRO)
       - le nombre total de dépôts (utile pour évaluer la régularité)
+
+    Si `allow_scraping=True` et que l'API ne renvoie rien (pas de clé ou
+    échec), on tombe sur enrichment.nbb_scraper qui charge la page
+    publique consult.cbso.nbb.be via Playwright (~3-5 s par fiche).
+    Désactivé par défaut car trop lent pour le scrape principal — utiliser
+    via scripts/backfill_nbb_via_playwright.py.
 
     Ces champs alimentent ensuite le scoring crédit heuristique
     (`enrichment/credit_score.py`).
@@ -99,6 +106,17 @@ def fetch_nbb_financials(bce: str, api_key: Optional[str] = None) -> NbbData:
             data.deposits_count = len(deposits)
             data.available = True
     except Exception:
-        return data
+        pass  # tombe éventuellement sur le fallback scraping
+
+    # Fallback Playwright si l'API n'a pas donné de résultat exploitable
+    # et que l'appelant l'a autorisé (lent, opt-in).
+    if not data.available and allow_scraping:
+        try:
+            from .nbb_scraper import scrape_nbb
+            scraped = scrape_nbb(bce)
+            if scraped.available:
+                return scraped
+        except Exception:
+            pass
 
     return data
