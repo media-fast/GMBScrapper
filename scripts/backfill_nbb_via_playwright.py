@@ -83,11 +83,17 @@ async def _enrich_all(rows: list[sqlite3.Row]) -> int:
                 creation_date=row["creation_date"],
                 nbb_data=data,
             )
+            # ⚠ On invalide AUSSI le rapport IA caché (Phase 2) car il a
+            # été généré avec l'ancien contexte (ex: orange « non vérifié »).
+            # Le prochain clic « Voir l'analyse complète » regénérera un
+            # rapport frais basé sur le nouveau scoring.
             conn.execute(
                 "UPDATE businesses SET "
                 "  nbb_year = COALESCE(?, nbb_year), "
                 "  credit_color = ?, credit_score = ?, credit_label = ?, "
-                "  credit_reasons = ?, credit_computed_at = ? "
+                "  credit_reasons = ?, credit_computed_at = ?, "
+                "  credit_ai_report = NULL, credit_ai_report_at = NULL, "
+                "  credit_ai_report_meta = NULL "
                 "WHERE dedup_key = ?",
                 (
                     data.year, score.color, score.score, score.label,
