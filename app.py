@@ -1778,7 +1778,6 @@ def render_detail_page(biz: dict) -> None:
 
     Layout :
       - Bouton « ← Retour aux résultats » en haut
-      - Action row Streamlit native (Appeler + Statut)
       - Iframe avec la maquette HTML pixel-perfect (hauteur fixe + scroll
         si nécessaire — pas de auto-resize JS pour éviter les boucles)
       - Bouton audit SEO caché (déclenché par JS depuis l'iframe)
@@ -1786,8 +1785,6 @@ def render_detail_page(biz: dict) -> None:
     from streamlit.components.v1 import html as _components_html
 
     safe_key = (biz.get("dedup_key") or "_no").replace(":", "_").replace("|", "_")
-    phone = biz.get("phone")
-    status = biz.get("call_status") or "À appeler"
     website = biz.get("website")
 
     # ─────────────── Bouton « ← Retour aux résultats » ───────────────────
@@ -1868,43 +1865,9 @@ html, body,
     except AttributeError:
         st.markdown(_detail_page_css, unsafe_allow_html=True)
 
-    # ─────────────── ACTION ROW NATIVE (au-dessus de l'iframe) ───────────────
-    # Deux actions principales : Appeler (Ringover) + Changer statut.
-    # L'audit SEO est rendu DESSOUS l'iframe (voir plus bas) pour que les
-    # résultats apparaissent juste après le bouton, comme demandé.
-    a1, a2 = st.columns([1, 2])
-    with a1:
-        disabled = not phone or not is_configured()
-        if st.button(
-            ":material/call: Appeler maintenant",
-            key=f"bd_call_{safe_key}", type="primary", width="stretch",
-            disabled=disabled,
-            help=("Click-to-call Ringover" if not disabled else
-                  ("Pas de numéro" if not phone else "RINGOVER_API_KEY manquante")),
-        ):
-            res = click_to_call(phone)
-            st.toast(res['message'],
-                     icon=":material/call_made:" if res["ok"] else ":material/error:")
-
-    with a2:
-        status_key = f"bd_status_{safe_key}"
-        if status_key not in st.session_state:
-            st.session_state[status_key] = status
-
-        def _on_status_change(_k=status_key, _d=biz.get("dedup_key")):
-            new_val = st.session_state[_k]
-            if _d and not _d.startswith("_no_"):
-                update_call_fields(_d, call_status=new_val)
-                st.toast(f"Statut : {new_val}", icon=":material/save:")
-
-        st.selectbox(
-            "Statut",
-            CALL_STATUSES,
-            index=CALL_STATUSES.index(status) if status in CALL_STATUSES else 0,
-            key=status_key,
-            on_change=_on_status_change,
-            label_visibility="collapsed",
-        )
+    # NOTE : L'action row native (Appeler maintenant + Statut) a été retirée
+    # de la page détail à la demande utilisateur — ces actions restent
+    # disponibles depuis la grille de résultats / la campagne d'appels.
 
     # ─────────────── AUDIT SEO : 2 triggers Streamlit cachés ─────────────
     # Les boutons VISIBLES sont DANS l'iframe sidebar (sous l'URL du site).
