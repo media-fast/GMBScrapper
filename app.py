@@ -3175,29 +3175,23 @@ def _build_detail_visual_html(biz: dict, cached_audit: dict | None = None) -> st
         }}, '*');
       }}
 
-      // 2. Set direct sur l'iframe element
+      // 2. Set direct sur l'iframe element UNIQUEMENT.
+      //    ⚠ NE PAS toucher aux parents (ancien walk-up retiré) :
+      //    Streamlit recycle ses stElementContainer DOM nodes entre les
+      //    reruns / changements de page. Si on set inline style.height sur
+      //    un stElementContainer ici, et que Streamlit réutilise ensuite ce
+      //    même noeud pour un autre élément (ex : un st.markdown("") spacer
+      //    sur la page d'accueil après navigation depuis le détail), le
+      //    style inline persiste → grand espace vide de 962px qui ne se
+      //    nettoie qu'au F5.
+      //
+      //    Le CSS injecté dans render_detail_page force déjà les wrappers
+      //    iframe à `height: auto !important`, donc ils s'adaptent
+      //    naturellement à l'iframe redimensionnée ci-dessous.
       const frame = window.frameElement;
       if (frame) {{
         frame.style.height = clamped + 'px';
         frame.setAttribute('height', clamped);
-        // 3. Walk-up sur les parents (max 4 niveaux) pour resize les wrappers
-        let parent = frame.parentElement;
-        let depth = 0;
-        while (parent && depth < 4) {{
-          // Ne resize que les conteneurs Streamlit (data-testid="stIFrame" ou stElement…)
-          // pour ne pas casser le layout général
-          const tid = parent.getAttribute && parent.getAttribute('data-testid');
-          if (tid && (tid.includes('IFrame') || tid.includes('Element'))) {{
-            parent.style.height = clamped + 'px';
-            parent.style.minHeight = clamped + 'px';
-          }}
-          // Aussi : si le parent direct a une hauteur inline fixe, l'ajuster
-          if (depth === 0 && parent.style && parent.style.height) {{
-            parent.style.height = clamped + 'px';
-          }}
-          parent = parent.parentElement;
-          depth++;
-        }}
       }}
     }} catch (e) {{
       console.error('resizeFrameToContent failed:', e);
@@ -5309,6 +5303,12 @@ elif _phase == PHASE_ERROR and not _scrape_state.get("google_blocked"):
     # Si c'est une autre erreur (pas un Google block, déjà bannerisé ci-dessus)
     progress_slot.error(f"Erreur durant le scraping : {_scrape_state.get('error')}",
                         icon=":material/error:")
+else:
+    # Aucune phase à afficher → clear explicite des slots pour s'assurer qu'aucun
+    # contenu / hauteur résiduelle ne traîne (sécurité belt-and-braces, en
+    # complément du fix JS iframe qui ne touche plus aux parents).
+    progress_slot.empty()
+    google_block_slot.empty()
 
 
 results = st.session_state.results
