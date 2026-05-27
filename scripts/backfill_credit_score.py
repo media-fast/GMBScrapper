@@ -72,10 +72,13 @@ def main() -> int:
                 creation_date=row["creation_date"],
                 nbb_data=nbb if nbb.available else None,
             )
+            # Invalide AUSSI le rapport IA caché (cf. backfill_nbb_via_playwright)
             conn.execute(
                 "UPDATE businesses SET "
                 "  credit_color = ?, credit_score = ?, credit_label = ?, "
-                "  credit_reasons = ?, credit_computed_at = ? "
+                "  credit_reasons = ?, credit_computed_at = ?, "
+                "  credit_ai_report = NULL, credit_ai_report_at = NULL, "
+                "  credit_ai_report_meta = NULL "
                 "WHERE dedup_key = ?",
                 (
                     score.color, score.score, score.label,

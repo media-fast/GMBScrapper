@@ -1738,13 +1738,18 @@ def _show_credit_report_dialog() -> None:
     report_md = st.session_state.get("_credit_report_md", "")
     provider_label = st.session_state.get("_credit_report_provider", "IA")
     biz_name = st.session_state.get("_credit_report_biz_name", "Entreprise")
+    biz_dict = st.session_state.get("_credit_report_biz", {})
+    generated_at = st.session_state.get("_credit_report_generated_at", "")
 
     try:
         st.html(_SEO_REPORT_DIALOG_CSS)
     except AttributeError:
         st.markdown(_SEO_REPORT_DIALOG_CSS, unsafe_allow_html=True)
 
-    # Header premium Media Fast — variante crédit
+    # Header premium Media Fast — variante crédit (avec date de génération)
+    ts_html = (f'<div class="sr-header__sub" style="opacity:0.65;'
+               f'font-size:0.8rem;">Généré le {_safe_html(generated_at)}</div>'
+               if generated_at else '')
     st.markdown(
         '<div class="sr-root">'
         '<div class="sr-header">'
@@ -1754,10 +1759,39 @@ def _show_credit_report_dialog() -> None:
         '</div>'
         f'<h1 class="sr-header__title">{_safe_html(biz_name)}</h1>'
         f'<div class="sr-header__sub">Rapport généré par {_safe_html(provider_label)}</div>'
+        f'{ts_html}'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
     )
+
+    # Bouton « Régénérer cette analyse » — utile quand les données BNB ont
+    # été mises à jour depuis le dernier rapport (cf. backfill Playwright).
+    if biz_dict.get("bce_number"):
+        regen_col, _ = st.columns([1, 3])
+        with regen_col:
+            if st.button(":material/refresh: Régénérer l'analyse",
+                         key=f"regen_credit_{biz_dict.get('dedup_key', '')}",
+                         width="stretch", type="secondary",
+                         help="Relance l'analyse IA avec les données BNB "
+                              "actuelles. Utile après un re-scrape."):
+                with st.spinner("Régénération en cours…"):
+                    from enrichment.credit_ai_report import generate_credit_report
+                    res = generate_credit_report(biz_dict)
+                    if res.get("ok"):
+                        from storage.history import save_credit_ai_report
+                        save_credit_ai_report(biz_dict.get("dedup_key"), res)
+                        # Met à jour le session_state pour refléter dans le popup
+                        st.session_state["_credit_report_md"] = res["report"]
+                        st.session_state["_credit_report_provider"] = {
+                            "openai": "OpenAI",
+                            "anthropic": "Anthropic Claude",
+                        }.get(res.get("provider"), "IA")
+                        st.session_state["_credit_report_generated_at"] = \
+                            datetime.now().strftime("%Y-%m-%d %H:%M")
+                        st.rerun()
+                    else:
+                        st.error(f"Erreur : {res.get('message', '—')}")
 
     if report_md:
         # Strip le header dupliqué (commence par « **Analyse crédit — … »)
@@ -2056,6 +2090,12 @@ html, body,
                 "anthropic": "Anthropic Claude",
             }.get((cached_credit.get("meta") or {}).get("provider"), "IA")
             st.session_state["_credit_report_biz_name"] = biz.get("name") or "Entreprise"
+            # Passe le biz dict complet + la date de génération pour
+            # alimenter le bouton « Régénérer » dans le popup
+            st.session_state["_credit_report_biz"] = biz
+            st.session_state["_credit_report_generated_at"] = (
+                cached_credit.get("_generated_at") or ""
+            )
 
             with st.container(key="bd-hidden-view-credit-run"):
                 if st.button("VIEW_CREDIT_INTERNAL",
