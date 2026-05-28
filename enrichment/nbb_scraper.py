@@ -97,11 +97,8 @@ def _parse_page_text(text: str) -> Optional[dict]:
     }
 
 
-async def _scrape_one(page: Page, bce_digits: str) -> Optional[dict]:
-    """Charge la page consult pour un BCE et parse les métadonnées.
-
-    Renvoie None si le BCE n'a pas de dépôt OU si la page n'a pas chargé.
-    """
+async def _scrape_one_attempt(page: Page, bce_digits: str) -> Optional[dict]:
+    """Une seule tentative de scrape (utilisée par _scrape_one + retries)."""
     url = f"{CONSULT_BASE}{bce_digits}"
     # `networkidle` est nettement plus fiable que `domcontentloaded` ici :
     # Angular fait plusieurs XHR avant d'hydrater le tableau. On a 30 s de
@@ -118,17 +115,43 @@ async def _scrape_one(page: Page, bce_digits: str) -> Optional[dict]:
     # Polling court pour absorber les renders progressifs Angular
     # (parfois la table arrive en 2-3 passes après networkidle).
     await page.wait_for_timeout(DEFAULT_WAIT_AFTER_LOAD_MS)
-    for _ in range(6):  # 6 × 500 ms = 3 s additional grace
+    for _ in range(8):  # 8 × 500 ms = 4 s grace (au lieu de 6)
         text = await page.inner_text("body")
         if _RE_DEPOSIT_DATE.search(text):
             return _parse_page_text(text)
-        if re.search(r"0\s+r[ée]sultat|Aucun", text, re.IGNORECASE):
-            return None  # vraiment pas de dépôt
+        # ⚠ « 0 résultat » indique vraiment « pas de dépôt » — mais
+        # seulement si on a aussi le nom de l'entreprise (= page vraiment
+        # chargée). Sinon c'est juste un état intermédiaire du SPA.
+        if (re.search(r"0\s+r[ée]sultat", text, re.IGNORECASE)
+                and len(text) > 200):
+            return None
         await page.wait_for_timeout(500)
 
     # Dernière chance après le polling
     text = await page.inner_text("body")
     return _parse_page_text(text)
+
+
+async def _scrape_one(page: Page, bce_digits: str,
+                      max_retries: int = 2) -> Optional[dict]:
+    """Scrape avec retry sur les échecs transitoires.
+
+    Le SPA Angular CBSO peut parfois servir une page incomplète :
+      - networkidle déclenché trop tôt
+      - hydratation du tableau qui rate
+      - rate limiting silencieux
+    On retry jusqu'à `max_retries` fois (+1 attempt = 3 essais max) avec
+    un backoff progressif. Cas typique observé : un même BCE renvoie
+    None au premier passage puis OK au second avec ~13 dépôts.
+    """
+    for attempt in range(max_retries + 1):
+        result = await _scrape_one_attempt(page, bce_digits)
+        if result is not None and result.get("deposit_date"):
+            return result
+        if attempt < max_retries:
+            # Backoff progressif : 1s → 2s entre les tentatives
+            await page.wait_for_timeout(1000 * (attempt + 1))
+    return result  # last result (None ou dict incomplet)
 
 
 # ============================================================================

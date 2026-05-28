@@ -6439,9 +6439,33 @@ with tab_history:
         )
 
         with st.expander("Réinitialiser l'historique"):
-            st.warning("Cette action supprime toutes les recherches et la base de déduplication.")
-            if st.button("Vider l'historique", type="secondary"):
+            st.warning(
+                "⚠ **Action destructive irréversible.** Supprime TOUTES les "
+                "fiches entreprises, toutes les recherches, les scorings "
+                "crédit, les rapports IA SEO et crédit. **Aucun backup.**"
+            )
+            # Garde-fou : double confirmation par checkbox + champ texte
+            confirm_box = st.checkbox(
+                "Je comprends que cette action est irréversible",
+                key="hist_clear_confirm_box",
+            )
+            confirm_text = st.text_input(
+                "Tape « SUPPRIMER » pour confirmer",
+                key="hist_clear_confirm_text",
+                placeholder="SUPPRIMER",
+            )
+            clear_allowed = confirm_box and confirm_text.strip() == "SUPPRIMER"
+            if st.button(
+                "Vider l'historique",
+                type="primary" if clear_allowed else "secondary",
+                disabled=not clear_allowed,
+                help=("Coche la case + tape SUPPRIMER pour activer"
+                      if not clear_allowed else None),
+            ):
                 clear_history()
+                # Reset les checkboxes pour éviter un re-clic accidentel
+                st.session_state["hist_clear_confirm_box"] = False
+                st.session_state["hist_clear_confirm_text"] = ""
                 st.success("Historique vidé. Recharge la page.")
     else:
         st.info("La base de déduplication est vide. Elle se remplit à chaque recherche.")
