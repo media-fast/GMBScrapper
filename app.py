@@ -5259,6 +5259,27 @@ with st.container(border=True):
                 else:
                     max_per_city = st.slider("Max par commune", 5, 100, 20, 5)
                 do_fin = st.toggle("Données financières (BNB, CompanyWeb)", value=True)
+                # Toggle scoring crédit via Playwright BNB
+                import os as _os_for_nbb_check
+                _has_nbb_key = bool(_os_for_nbb_check.environ.get("NBB_API_KEY"))
+                do_credit_scoring = st.toggle(
+                    "Scoring crédit BNB (via Playwright si pas de clé API)",
+                    value=False,
+                    disabled=not do_fin,
+                    help=(
+                        "Active la vérification automatique des dépôts BNB pour "
+                        "chaque fiche → coloration santé financière "
+                        "(🟢🟡🟠🔴⚪) calculée pendant le scrape.\n\n"
+                        + ("✅ NBB_API_KEY détectée — lookup rapide (~50ms/fiche)"
+                           if _has_nbb_key else
+                           "⚠ Pas de NBB_API_KEY → fallback Playwright "
+                           "(+~4s par fiche avec BCE, scrape allongé).\n\n"
+                           "Sans ce toggle, les nouvelles fiches sont marquées "
+                           "⚪ « non évalué » jusqu'à exécution manuelle du "
+                           "script `scripts/backfill_nbb_via_playwright.py`."
+                        )
+                    ),
+                )
 
         # --- Options techniques (sous-section finale dans l'expander) ---
         st.markdown("")
@@ -5638,6 +5659,7 @@ if run:
             do_bce=do_bce,
             do_fin=do_fin,
             workers=workers,
+            do_credit_scoring=do_credit_scoring,
         )
         # Rerun immédiat pour afficher le panel de progression
         st.rerun()
@@ -5897,6 +5919,13 @@ with tab_results:
             no_phone_count = sum(1 for b in biz_dicts if not b.get("phone"))
             top2_count = sum(1 for b in biz_dicts if (b.get("google_rank") or 0) and b["google_rank"] <= 2)
 
+            # Compteurs par couleur crédit (santé financière)
+            credit_counts = {c: 0 for c in ("green", "yellow", "orange", "red", "gray")}
+            for b in biz_dicts:
+                c = b.get("credit_color")
+                if c in credit_counts:
+                    credit_counts[c] += 1
+
             filter_options = [
                 f"Tous ({len(biz_dicts)})",
                 f"Top 2 Google ({top2_count})",
@@ -5906,6 +5935,18 @@ with tab_results:
                 f"Sans site web ({no_web_count})",
                 f"Sans téléphone ({no_phone_count})",
             ]
+            # On n'affiche que les filtres crédit dont le compte > 0 pour ne
+            # pas polluer la barre quand toutes les fiches sont grises.
+            if credit_counts["green"]:
+                filter_options.append(f"🟢 Bon payeur ({credit_counts['green']})")
+            if credit_counts["yellow"]:
+                filter_options.append(f"🟡 À surveiller ({credit_counts['yellow']})")
+            if credit_counts["orange"]:
+                filter_options.append(f"🟠 À risque ({credit_counts['orange']})")
+            if credit_counts["red"]:
+                filter_options.append(f"🔴 Mauvais payeur ({credit_counts['red']})")
+            if credit_counts["gray"]:
+                filter_options.append(f"⚪ Non évalué ({credit_counts['gray']})")
             fc1, fc2 = st.columns([3, 2])
             with fc1:
                 try:
@@ -5945,6 +5986,16 @@ with tab_results:
                 filtered = [b for b in biz_dicts if (b.get("google_rank") or 0) and b["google_rank"] <= 2]
             elif chip.startswith("Sans téléphone"):
                 filtered = [b for b in biz_dicts if not b.get("phone")]
+            elif chip.startswith("🟢"):
+                filtered = [b for b in biz_dicts if b.get("credit_color") == "green"]
+            elif chip.startswith("🟡"):
+                filtered = [b for b in biz_dicts if b.get("credit_color") == "yellow"]
+            elif chip.startswith("🟠"):
+                filtered = [b for b in biz_dicts if b.get("credit_color") == "orange"]
+            elif chip.startswith("🔴"):
+                filtered = [b for b in biz_dicts if b.get("credit_color") == "red"]
+            elif chip.startswith("⚪"):
+                filtered = [b for b in biz_dicts if b.get("credit_color") == "gray"]
             else:
                 filtered = list(biz_dicts)
 
