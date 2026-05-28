@@ -51,16 +51,14 @@ export function HomePage() {
               </svg>
             </span>
             <div>
-              <div className="oa-brand__name">ScrapperGMB</div>
-              <div className="oa-brand__sub">Prospection B2B · Media Fast</div>
+              <div className="oa-brand__name">Oui allo</div>
+              <div className="oa-brand__sub">Prospection B2B</div>
             </div>
           </Link>
           <div className="oa-topbar__meta">
-            <span className="oa-topbar__quota">
-              <strong>{stats?.total_businesses ?? "—"}</strong> prospects en base
-            </span>
-            <span style={{ color: "var(--ink-400)" }}>
-              POC React + FastAPI
+            <span className="oa-topbar__badge">
+              Base prospects · <strong>{stats?.total_businesses ?? "—"}</strong>{" "}
+              entreprises
             </span>
           </div>
         </div>
@@ -69,24 +67,18 @@ export function HomePage() {
       {/* Hero */}
       <section className="oa-hero">
         <div className="oa-hero__text">
-          <span className="oa-hero__eyebrow">Prospection ciblée</span>
+          <span className="oa-hero__eyebrow">Génération de prospects</span>
           <h1 className="oa-hero__title">
-            Trouve tes prospects B2B en{" "}
-            <em>quelques minutes</em>
+            Construis une liste de prospects <em>qualifiée</em>, en quelques
+            minutes.
           </h1>
           <p className="oa-hero__desc">
-            Scrape Google Maps + BCE/KBO + dépôts BNB pour obtenir des fiches
-            qualifiées avec téléphone, dirigeants et santé financière.
-            Pousse vers Ringover en un clic.
+            Lance une recherche par métier sur les communes ciblées. Les fiches
+            enrichies — coordonnées, site, numéro de TVA — sont exportables au
+            format Ringover en un clic.
           </p>
         </div>
         <div className="oa-hero__stats">
-          <div>
-            <div className="oa-hero__stat-label">Prospects</div>
-            <div className="oa-hero__stat-value">
-              {stats?.total_businesses ?? "—"}
-            </div>
-          </div>
           <div>
             <div className="oa-hero__stat-label">Recherches</div>
             <div className="oa-hero__stat-value">
@@ -94,7 +86,13 @@ export function HomePage() {
             </div>
           </div>
           <div>
-            <div className="oa-hero__stat-label">Appelés</div>
+            <div className="oa-hero__stat-label">Prospects en base</div>
+            <div className="oa-hero__stat-value">
+              {stats?.total_businesses ?? "—"}
+            </div>
+          </div>
+          <div>
+            <div className="oa-hero__stat-label">Avec TVA</div>
             <div className="oa-hero__stat-value">
               {stats?.total_called ?? "—"}
             </div>

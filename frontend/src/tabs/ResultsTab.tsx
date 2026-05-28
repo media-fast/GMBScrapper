@@ -1,19 +1,22 @@
 /**
- * Tab Résultats — reprend exactement la logique de l'ancienne ResultsPage.
- * Sélecteur scrape + métriques + filtres pills + recherche + grille de cards.
+ * Tab Résultats — table de prospects style Oui Allo original.
+ * Sélecteur scrape + métriques + actions (Excel/Ringover/Supprimer) +
+ * filtres pills + recherche + TABLE avec pagination.
  */
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getSearchBusinesses, listSearches } from "../lib/api";
 import { ScrapeSelector } from "../components/ScrapeSelector";
-import { BusinessCard } from "../components/BusinessCard";
+import { BusinessRow } from "../components/BusinessRow";
 import {
   FilterPills,
   applyFilter,
   type FilterKey,
 } from "../components/FilterPills";
 import type { BusinessSummary } from "../lib/types";
+
+const PAGE_SIZE = 25;
 
 export function ResultsTab() {
   const searchesQ = useQuery({
@@ -33,6 +36,7 @@ export function ResultsTab() {
 
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchText, setSearchText] = useState("");
+  const [page, setPage] = useState(0);
 
   const filtered = useMemo(() => {
     if (!businessesQ.data) return [];
@@ -54,6 +58,14 @@ export function ResultsTab() {
     }
     return list;
   }, [businessesQ.data, filter, searchText]);
+
+  // Reset page quand on change de scrape ou de filtre
+  useMemo(() => setPage(0), [effectiveSearchId, filter, searchText]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const startIdx = currentPage * PAGE_SIZE;
+  const pageItems = filtered.slice(startIdx, startIdx + PAGE_SIZE);
 
   if (searchesQ.isLoading) {
     return (
@@ -96,21 +108,19 @@ export function ResultsTab() {
           </div>
           <div className="empty-state__title serif">Prêt à prospecter</div>
           <div className="empty-state__text">
-            Lance un scrape depuis l'app Streamlit puis recharge cette page.
+            Lance un scrape via le formulaire au-dessus.
           </div>
         </div>
         <div className="oa-steps">
           <Step num={1} title="Définis ta cible">
-            Saisis le métier (opticien, dentiste, garage…) et une liste de
-            villes dans le formulaire au-dessus.
+            Saisis le métier et une liste de villes dans le formulaire ci-dessus.
           </Step>
           <Step num={2} title="Lance le scraping">
-            Google Maps + BCE/KBO + sites web sont interrogés pour récupérer
-            n° TVA, dirigeants et données financières.
+            Google Maps + BCE/KBO + BNB → fiches enrichies avec TVA, dirigeants,
+            santé financière.
           </Step>
           <Step num={3} title="Appelle tes prospects">
-            Push vers Ringover en un clic, click-to-call depuis chaque carte,
-            et suivi du statut.
+            Push vers Ringover en un clic, suivi du statut.
           </Step>
         </div>
       </>
@@ -118,7 +128,7 @@ export function ResultsTab() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* Sélecteur de scrape */}
       <div className="card" style={{ padding: 20 }}>
         <div
@@ -148,94 +158,160 @@ export function ResultsTab() {
         />
       )}
 
-      {/* Filtres + recherche */}
+      {/* Card titre + actions + filtres + table */}
       {businessesQ.data && (
-        <div
-          className="card"
-          style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
-        >
-          <FilterPills
-            businesses={businessesQ.data.items}
-            creditCounts={businessesQ.data.credit_counts}
-            active={filter}
-            onChange={setFilter}
-          />
-          <div style={{ position: "relative", maxWidth: 420 }}>
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--ink-400)"
-              strokeWidth="2"
-              style={{
-                position: "absolute",
-                left: 12,
-                top: "50%",
-                transform: "translateY(-50%)",
-                width: 16,
-                height: 16,
-              }}
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Rechercher par nom, ville ou TVA…"
-              style={{
-                width: "100%",
-                padding: "9px 14px 9px 38px",
-                fontSize: 13,
-                borderRadius: 10,
-                border: "1px solid var(--ink-200)",
-                outline: "none",
-                fontFamily: "inherit",
-                color: "var(--ink-900)",
-                background: "var(--paper)",
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = "var(--indigo-600)";
-                e.target.style.boxShadow = "0 0 0 3px rgba(79, 63, 240, 0.1)";
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = "var(--ink-200)";
-                e.target.style.boxShadow = "";
-              }}
-            />
+        <div className="oa-results-card">
+          {/* Titre + boutons d'action */}
+          <div className="oa-action-row">
+            <h2 className="oa-results-title">
+              <em>{businessesQ.data.total} prospects</em> qualifiés
+            </h2>
+            <div className="oa-action-row__buttons">
+              <button className="btn btn--excel" disabled title="À venir">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Télécharger Excel
+              </button>
+              <button className="btn btn--excel" disabled title="À venir">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
+                </svg>
+                Exporter pour Ringover
+              </button>
+              <button className="btn btn--ghost" disabled title="À venir">
+                Supprimer
+              </button>
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-500)" }}>
-            {filtered.length} fiche(s) affichée(s) sur {businessesQ.data.total}
-          </div>
-        </div>
-      )}
 
-      {/* Grille de cards */}
-      {businessesQ.isLoading ? (
-        <div className="empty-state">
-          <div className="empty-state__title serif">Chargement des fiches…</div>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state__title serif">
-            Aucune fiche ne correspond aux filtres
+          {/* Filtres + recherche */}
+          <div
+            style={{
+              display: "flex",
+              gap: 16,
+              alignItems: "flex-start",
+              marginBottom: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <FilterPills
+                businesses={businessesQ.data.items}
+                creditCounts={businessesQ.data.credit_counts}
+                active={filter}
+                onChange={setFilter}
+              />
+            </div>
+            <div style={{ position: "relative", flex: "0 0 320px" }}>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--ink-400)"
+                strokeWidth="2"
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 16,
+                  height: 16,
+                }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Rechercher par nom, ville ou TVA…"
+                style={{
+                  width: "100%",
+                  padding: "9px 14px 9px 38px",
+                  fontSize: 13,
+                  borderRadius: 10,
+                  border: "1px solid var(--ink-200)",
+                  outline: "none",
+                  fontFamily: "inherit",
+                  background: "var(--paper)",
+                }}
+              />
+            </div>
           </div>
-          <div className="empty-state__text">
-            Réinitialise les filtres ou la recherche pour voir toutes les
-            fiches.
-          </div>
-        </div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gap: 16,
-            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-          }}
-        >
-          {filtered.map((b) => (
-            <BusinessCard key={b.dedup_key} business={b} />
-          ))}
+
+          {/* Table */}
+          {filtered.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state__title serif">
+                Aucune fiche ne correspond aux filtres
+              </div>
+              <div className="empty-state__text">
+                Réinitialise les filtres ou la recherche.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="oa-table-wrap">
+                <table className="oa-table">
+                  <thead>
+                    <tr>
+                      <th>Entreprise</th>
+                      <th>Métier</th>
+                      <th>Commune</th>
+                      <th>Téléphone</th>
+                      <th>TVA</th>
+                      <th>Site web</th>
+                      <th>Qualité</th>
+                      <th>Statut</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map((b) => (
+                      <BusinessRow key={b.dedup_key} business={b} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="oa-pagination">
+                  <div className="oa-pagination__info">
+                    Affichage <strong>{startIdx + 1}–{startIdx + pageItems.length}</strong> sur{" "}
+                    <strong>{filtered.length}</strong> prospects · page{" "}
+                    {currentPage + 1} / {totalPages}
+                  </div>
+                  <div className="oa-pagination__nav">
+                    <button
+                      className="oa-page-btn"
+                      onClick={() => setPage(Math.max(0, currentPage - 1))}
+                      disabled={currentPage === 0}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M15 18l-6-6 6-6" />
+                      </svg>
+                    </button>
+                    <span className="oa-page-current">
+                      <strong>{currentPage + 1}</strong> / {totalPages}
+                    </span>
+                    <button
+                      className="oa-page-btn"
+                      onClick={() => setPage(Math.min(totalPages - 1, currentPage + 1))}
+                      disabled={currentPage >= totalPages - 1}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -281,7 +357,7 @@ function Metric({ label, value }: { label: string; value: number }) {
       <div
         className="serif"
         style={{
-          fontSize: 24,
+          fontSize: 28,
           fontWeight: 600,
           color: "var(--ink-900)",
           lineHeight: 1,

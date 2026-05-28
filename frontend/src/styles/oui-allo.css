@@ -451,6 +451,365 @@ body.oui-allo {
   padding: 12px 32px 60px;
 }
 
+/* ─── Table de résultats (style template original) ─────────────────── */
+.oa-results-card {
+  background: var(--paper);
+  border: 1px solid var(--ink-100);
+  border-radius: 22px;
+  box-shadow: var(--shadow-md);
+  padding: 24px 28px;
+  margin-bottom: 20px;
+}
+
+.oa-results-title {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink-900);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.oa-results-title em {
+  font-style: italic;
+  color: var(--indigo-700);
+  font-weight: 600;
+}
+
+.oa-action-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.oa-action-row__buttons {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.btn--excel {
+  background: #1F9D55; color: white; border: none;
+}
+.btn--excel:hover {
+  background: #157f43; transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(31, 157, 85, 0.3);
+}
+
+/* Table */
+.oa-table-wrap {
+  overflow-x: auto;
+  margin: 0 -28px;
+  padding: 0 28px;
+}
+.oa-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+.oa-table thead th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--ink-200);
+  white-space: nowrap;
+}
+.oa-table tbody td {
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--ink-100);
+  vertical-align: middle;
+  font-size: 13px;
+  color: var(--ink-700);
+}
+.oa-table tbody tr:hover {
+  background: var(--cream);
+}
+.oa-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.oa-table__entreprise {
+  display: flex; align-items: center; gap: 12px;
+  min-width: 220px;
+}
+.oa-avatar {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--indigo-600), var(--indigo-500));
+  color: white;
+  display: grid; place-items: center;
+  font-family: 'Fraunces', serif;
+  font-size: 13px; font-weight: 600;
+  flex-shrink: 0;
+}
+.oa-table__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-900);
+  line-height: 1.3;
+}
+.oa-table__name a { color: inherit; text-decoration: none; }
+.oa-table__name a:hover { color: var(--indigo-700); }
+.oa-table__addr {
+  font-size: 11.5px;
+  color: var(--ink-500);
+  margin-top: 2px;
+}
+
+.oa-metier-chip {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--indigo-50);
+  color: var(--indigo-700);
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.oa-tva--missing { color: var(--ink-400); font-style: italic; font-size: 12px; }
+.oa-tva--present { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--indigo-700); }
+
+.oa-site-link {
+  color: var(--indigo-700);
+  text-decoration: underline;
+  text-decoration-color: var(--indigo-300);
+  font-size: 12.5px;
+}
+.oa-site-link:hover { text-decoration-color: var(--indigo-700); }
+
+/* Barre de qualité */
+.oa-quality {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 100px;
+}
+.oa-quality__bar {
+  width: 80px; height: 6px;
+  background: var(--ink-100);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+.oa-quality__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #DC2626 0%, #F59E0B 50%, #16A34A 100%);
+}
+.oa-quality__num {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--ink-700);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Status chips dans la table */
+.oa-status {
+  display: inline-flex; align-items: center;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  white-space: nowrap;
+}
+.oa-status--complet { background: #DCFCE7; color: #166534; }
+.oa-status--tva-missing { background: #FEE2E2; color: #991B1B; }
+.oa-status--site-missing { background: #FFEDD5; color: #9A3412; }
+.oa-status--phone-missing { background: #FEE2E2; color: #991B1B; }
+
+/* Action buttons table */
+.oa-actions { display: flex; gap: 6px; }
+.oa-action-btn {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  display: grid; place-items: center;
+  border: none; cursor: pointer;
+  transition: all .15s;
+  text-decoration: none;
+}
+.oa-action-btn svg { width: 14px; height: 14px; }
+.oa-action-btn--call {
+  background: var(--indigo-600); color: white;
+}
+.oa-action-btn--call:hover {
+  background: var(--indigo-700);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(79, 63, 240, 0.3);
+}
+.oa-action-btn--info {
+  background: var(--ink-100); color: var(--ink-500);
+}
+.oa-action-btn--info:hover {
+  background: var(--indigo-50); color: var(--indigo-700);
+}
+
+/* Pagination */
+.oa-pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 0 4px; margin-top: 8px;
+  border-top: 1px solid var(--ink-100);
+}
+.oa-pagination__info {
+  font-size: 12px; color: var(--ink-500);
+}
+.oa-pagination__nav {
+  display: flex; align-items: center; gap: 4px;
+}
+.oa-page-btn {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--ink-200);
+  background: var(--paper);
+  color: var(--ink-700);
+  cursor: pointer;
+  display: grid; place-items: center;
+  font-family: inherit; font-size: 12px;
+  transition: all .15s;
+}
+.oa-page-btn:hover:not(:disabled) {
+  background: var(--indigo-50);
+  border-color: var(--indigo-300);
+  color: var(--indigo-700);
+}
+.oa-page-btn:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+.oa-page-current {
+  padding: 0 14px; font-size: 12.5px; color: var(--ink-700);
+  font-weight: 500;
+}
+.oa-page-current strong { color: var(--ink-900); font-weight: 700; }
+
+/* ─── Form Oui Allo (multi-select métiers + zone pills) ──────────── */
+.oa-help-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-size: 10px; font-weight: 700;
+  cursor: help;
+  margin-left: 6px;
+}
+
+.oa-multiselect {
+  position: relative;
+  background: var(--paper);
+  border: 1px solid var(--ink-200);
+  border-radius: 10px;
+  padding: 8px 14px;
+  min-height: 44px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  cursor: text;
+  transition: border-color .15s, box-shadow .15s;
+}
+.oa-multiselect:focus-within {
+  border-color: var(--indigo-600);
+  box-shadow: 0 0 0 3px rgba(79, 63, 240, 0.1);
+}
+.oa-multiselect__chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px;
+  background: var(--indigo-100);
+  color: var(--indigo-700);
+  border-radius: 7px;
+  font-size: 12px; font-weight: 600;
+}
+.oa-multiselect__chip button {
+  background: none; border: none; padding: 0;
+  color: var(--indigo-500); cursor: pointer;
+  display: inline-flex; align-items: center;
+  font-size: 14px; line-height: 1;
+}
+.oa-multiselect__chip button:hover { color: var(--indigo-900); }
+.oa-multiselect__input {
+  flex: 1; min-width: 120px;
+  background: transparent; border: none; outline: none;
+  font-family: inherit; font-size: 13px;
+  color: var(--ink-900);
+  padding: 4px 0;
+}
+.oa-multiselect__chevron {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  pointer-events: none; color: var(--ink-400);
+}
+
+/* Input variante violet pâle (pour métier personnalisé) */
+.oa-form-field__input--violet {
+  background: var(--indigo-50);
+  border-color: var(--indigo-100);
+}
+.oa-form-field__input--violet:focus {
+  background: var(--paper);
+}
+
+/* Zone pills (par arrondissement / commune / rayon) */
+.oa-zone-pills {
+  display: flex; gap: 0;
+  background: var(--ink-100);
+  border-radius: 11px;
+  padding: 4px;
+  width: fit-content;
+}
+.oa-zone-pill {
+  padding: 8px 16px;
+  background: transparent; color: var(--ink-500);
+  border: none; border-radius: 9px;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.oa-zone-pill:hover:not(.is-active) {
+  color: var(--ink-900);
+}
+.oa-zone-pill.is-active {
+  background: var(--ink-900);
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Toggle switch (variantes métier) */
+.oa-toggle {
+  display: inline-flex; align-items: center; gap: 10px;
+  cursor: pointer; user-select: none;
+  font-size: 13px; color: var(--ink-700); font-weight: 500;
+}
+.oa-toggle__switch {
+  position: relative;
+  width: 38px; height: 22px;
+  background: var(--ink-200);
+  border-radius: 999px;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.oa-toggle__switch::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: white; border-radius: 50%;
+  transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.oa-toggle.is-on .oa-toggle__switch {
+  background: var(--indigo-600);
+}
+.oa-toggle.is-on .oa-toggle__switch::after {
+  transform: translateX(16px);
+}
+.oa-toggle input { display: none; }
+
+/* Topbar badge "Base prospects" */
+.oa-topbar__badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  background: var(--green-50); color: var(--green-600);
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.oa-topbar__badge::before {
+  content: '';
+  width: 7px; height: 7px;
+  border-radius: 999px;
+  background: var(--green-600);
+  box-shadow: 0 0 0 3px rgba(15, 157, 88, 0.25);
+}
+.oa-topbar__badge strong {
+  color: var(--green-600); font-weight: 700;
+}
+
 /* ─── Steps grid (empty state d'accueil) ─────────────────────────────── */
 .oa-steps {
   display: grid;
