@@ -41,13 +41,18 @@ def _enrich_from_bce_detail(business: Business) -> None:
         business.website = detail.website
 
 
-def _enrich_financial(business: Business) -> None:
+def _enrich_financial(business: Business,
+                      allow_credit_scraping: bool = False) -> None:
     if not business.bce_number:
         return
     business.nbb_url = nbb_consult_url(business.bce_number)
     business.companyweb_url = companyweb_url(business.bce_number)
 
-    nbb = fetch_nbb_financials(business.bce_number)
+    # `allow_scraping=True` fait tomber sur le scraper Playwright si
+    # NBB_API_KEY n'est pas configurée → permet d'avoir une couleur
+    # crédit fiable sans clé API (+~3-5 s par fiche avec BCE).
+    nbb = fetch_nbb_financials(business.bce_number,
+                               allow_scraping=allow_credit_scraping)
     if nbb.available:
         business.nbb_year = nbb.year
         business.nbb_revenue = nbb.revenue
@@ -92,6 +97,7 @@ def enrich_business_with_vat(
     use_kbo: bool = True,
     use_bce_detail: bool = True,
     use_financial: bool = True,
+    allow_credit_scraping: bool = False,
 ) -> Business:
     # 1. Site web : TVA + email pro + téléphone (fallback si Google Maps n'en a pas)
     if use_website and business.website:
@@ -143,7 +149,7 @@ def enrich_business_with_vat(
     # 4. Données financières (BNB) + solvabilité (CompanyWeb)
     if use_financial and business.bce_number:
         try:
-            _enrich_financial(business)
+            _enrich_financial(business, allow_credit_scraping=allow_credit_scraping)
         except Exception:
             pass
 
@@ -169,6 +175,7 @@ def enrich_all_parallel(
     businesses: list[Business],
     on_progress: Optional[Callable[[str], None]] = None,
     max_workers: int = 6,
+    allow_credit_scraping: bool = False,
 ) -> list[Business]:
     total = len(businesses)
     if total == 0:
@@ -177,7 +184,10 @@ def enrich_all_parallel(
     done = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_biz = {
-            executor.submit(enrich_business_with_vat, b): b for b in businesses
+            executor.submit(
+                enrich_business_with_vat, b,
+                allow_credit_scraping=allow_credit_scraping,
+            ): b for b in businesses
         }
         for fut in as_completed(future_to_biz):
             done += 1

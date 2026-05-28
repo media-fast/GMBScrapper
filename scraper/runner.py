@@ -129,6 +129,7 @@ def _run_pipeline(
     do_bce: bool,
     do_fin: bool,
     workers: int,
+    do_credit_scoring: bool = False,
 ) -> None:
     """Pipeline complet, exécuté dans le thread background."""
     # Imports tardifs pour éviter les cycles + s'assurer du chargement dans le thread
@@ -325,7 +326,8 @@ def _run_pipeline(
             _log(f"Enrichissement parallèle (workers={workers})…")
             try:
                 businesses = enrich_all_parallel(
-                    businesses, on_progress=_log, max_workers=workers
+                    businesses, on_progress=_log, max_workers=workers,
+                    allow_credit_scraping=do_credit_scoring,
                 )
                 state["vat_enriched"] = sum(1 for b in businesses if b.vat_number)
             except Exception as e:  # noqa: BLE001
