@@ -8,6 +8,8 @@ import type {
   BusinessDetail,
   CampaignResponse,
   HistoryResponse,
+  ScrapeProgress,
+  ScrapeStartRequest,
   SearchBusinessesResponse,
   SearchSummary,
 } from "./types";
@@ -57,5 +59,22 @@ export async function getCampaign(
 // ─── Historique global ───────────────────────────────────────────────
 export async function getHistory(): Promise<HistoryResponse> {
   const { data } = await api.get<HistoryResponse>("/history");
+  return data;
+}
+
+// ─── Scrape ──────────────────────────────────────────────────────────
+export async function startScrape(
+  payload: ScrapeStartRequest,
+): Promise<{ scrape_id: string }> {
+  const { data } = await api.post<{ scrape_id: string }>("/scrapes", payload);
+  return data;
+}
+
+export async function getScrapeProgress(
+  scrapeId: string,
+): Promise<ScrapeProgress> {
+  const { data } = await api.get<ScrapeProgress>(
+    `/scrapes/${scrapeId}/progress`,
+  );
   return data;
 }

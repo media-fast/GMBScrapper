@@ -116,3 +116,52 @@ class HistoryStats(BaseModel):
 class HistoryResponse(BaseModel):
     stats: HistoryStats
     searches: list[SearchSummary]
+
+
+# ============================================================================
+# Scrape (lancement + progress)
+# ============================================================================
+
+class ScrapeStartRequest(BaseModel):
+    """Payload de POST /api/scrapes."""
+    metiers: list[str] = Field(
+        ..., min_length=1, description="Liste de métiers (« opticien », etc.)"
+    )
+    cities: list[str] = Field(
+        ..., min_length=1, description="Liste de communes (« Waterloo », etc.)"
+    )
+    max_per_city: int = Field(30, ge=1, le=500)
+    headless: bool = True
+    strict_city: bool = True
+    require_phone: bool = False
+    do_vat: bool = True
+    do_bce: bool = True
+    do_fin: bool = True
+    do_credit_scoring: bool = False
+    workers: int = Field(6, ge=1, le=12)
+
+
+class ScrapeStartResponse(BaseModel):
+    """Réponse au POST : l'ID utilisé pour le polling de progress."""
+    scrape_id: str
+
+
+class ScrapeProgress(BaseModel):
+    """Snapshot de l'état d'un scrape (renvoyé par GET /progress)."""
+    scrape_id: str
+    active: bool
+    phase: str
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    cities_total: int = 0
+    variants_total: int = 0
+    prospects_brut: int = 0
+    result_count: int = 0
+    vat_enriched: int = 0
+    google_blocked: bool = False
+    error: Optional[str] = None
+    log_tail: list[str] = Field(default_factory=list)
+    losses: dict[str, int] = Field(default_factory=dict)
+    # ID du `search` créé en DB une fois le scrape terminé → permet au
+    # front de jump dans le tab Résultats sur la nouvelle recherche.
+    result_search_id: Optional[int] = None

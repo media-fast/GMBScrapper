@@ -83,3 +83,36 @@ export interface HistoryResponse {
   stats: HistoryStats;
   searches: SearchSummary[];
 }
+
+// ─── Scrape ──────────────────────────────────────────────────────────
+export interface ScrapeStartRequest {
+  metiers: string[];
+  cities: string[];
+  max_per_city: number;
+  headless: boolean;
+  strict_city: boolean;
+  require_phone: boolean;
+  do_vat: boolean;
+  do_bce: boolean;
+  do_fin: boolean;
+  do_credit_scoring: boolean;
+  workers: number;
+}
+
+export interface ScrapeProgress {
+  scrape_id: string;
+  active: boolean;
+  phase: string;
+  started_at: string | null;
+  ended_at: string | null;
+  cities_total: number;
+  variants_total: number;
+  prospects_brut: number;
+  result_count: number;
+  vat_enriched: number;
+  google_blocked: boolean;
+  error: string | null;
+  log_tail: string[];
+  losses: Record<string, number>;
+  result_search_id: number | null;
+}

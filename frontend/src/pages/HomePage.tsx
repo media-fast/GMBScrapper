@@ -18,11 +18,16 @@ import { CampaignTab } from "../tabs/CampaignTab";
 import { OutOfZoneTab } from "../tabs/OutOfZoneTab";
 import { HistoryTab } from "../tabs/HistoryTab";
 import { HelpTab } from "../tabs/HelpTab";
+import { ScrapeForm } from "../components/ScrapeForm";
+import { ScrapeProgressPanel } from "../components/ScrapeProgressPanel";
 
 type TabKey = "results" | "campaign" | "out_of_zone" | "history" | "help";
 
 export function HomePage() {
   const [activeTab, setActiveTab] = useState<TabKey>("results");
+  // ID du scrape en cours (ou récemment terminé) → quand non-null,
+  // remplace le ScrapeForm par le ScrapeProgressPanel.
+  const [activeScrapeId, setActiveScrapeId] = useState<string | null>(null);
 
   const historyQ = useQuery({
     queryKey: ["history"],
@@ -97,8 +102,21 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Form-card placeholder */}
-      <ScrapeFormPlaceholder />
+      {/* Form de scrape OU panel de progression */}
+      {activeScrapeId ? (
+        <ScrapeProgressPanel
+          scrapeId={activeScrapeId}
+          onDone={() => setActiveTab("results")}
+          onDismiss={() => setActiveScrapeId(null)}
+        />
+      ) : (
+        <ScrapeForm
+          onStarted={(id) => {
+            setActiveScrapeId(id);
+            setActiveTab("results");
+          }}
+        />
+      )}
 
       {/* Tabs */}
       <nav className="oa-tabs" role="tablist">
@@ -145,83 +163,6 @@ export function HomePage() {
         {activeTab === "help" && <HelpTab />}
       </div>
     </>
-  );
-}
-
-// ─── Form placeholder ─────────────────────────────────────────────────
-
-function ScrapeFormPlaceholder() {
-  return (
-    <div className="oa-form-card">
-      <div className="oa-form-card__inner">
-        <div className="oa-form-card__header">
-          <div>
-            <h2 className="oa-form-card__title">Lancer une nouvelle recherche</h2>
-            <p className="oa-form-card__sub">
-              Métier + communes ciblées → scrape Google Maps + enrichissement
-            </p>
-          </div>
-          <span
-            style={{
-              padding: "5px 11px",
-              background: "var(--amber-50)",
-              color: "var(--amber-700)",
-              borderRadius: 999,
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-            }}
-          >
-            POC
-          </span>
-        </div>
-        <div className="oa-form-row">
-          <div className="oa-form-field">
-            <label className="oa-form-field__label">Métier(s)</label>
-            <input
-              type="text"
-              className="oa-form-field__input"
-              placeholder="ex : opticien, dentiste, garage…"
-              disabled
-            />
-          </div>
-          <div className="oa-form-field">
-            <label className="oa-form-field__label">Communes ou zone</label>
-            <input
-              type="text"
-              className="oa-form-field__input"
-              placeholder="ex : Waterloo, Mons, Liège"
-              disabled
-            />
-          </div>
-        </div>
-        <div className="oa-form-card__footer">
-          <div className="oa-form-estimate">
-            <div>
-              <div className="oa-form-estimate__num">—</div>
-              <div className="oa-form-estimate__label">
-                prospects estimés
-              </div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: "var(--ink-500)" }}>
-              Le formulaire de lancement nécessite WebSocket + jobs background.{" "}
-              <br />
-              Utilise <code className="mono" style={{ background: "var(--ink-100)", padding: "2px 6px", borderRadius: 4 }}>streamlit run app.py</code> pour scraper.
-            </span>
-            <button
-              className="btn btn--primary"
-              disabled
-              style={{ opacity: 0.5, cursor: "not-allowed" }}
-            >
-              Lancer (bientôt)
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 

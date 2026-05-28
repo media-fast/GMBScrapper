@@ -13,9 +13,13 @@ l'UI Streamlit, juste via HTTP/JSON au lieu d'imports Python directs.
 CORS ouvert pour localhost:5173 (Vite dev server) — à durcir en prod.
 """
 
+import uuid
+from typing import Any, MutableMapping
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from scraper.runner import init_scrape_state, start_background_scrape
 from storage.history import (
     campaign_stats,
     get_campaign_businesses,
@@ -32,9 +36,22 @@ from .schemas import (
     CampaignResponse,
     HistoryResponse,
     HistoryStats,
+    ScrapeProgress,
+    ScrapeStartRequest,
+    ScrapeStartResponse,
     SearchBusinessesResponse,
     SearchSummary,
 )
+
+
+# ============================================================================
+# In-memory store des états de scrape
+# ============================================================================
+# Pas de persistance — l'état est éphémère pendant la durée du scrape (~3-15 min).
+# Une fois le scrape terminé, l'état reste accessible jusqu'au redémarrage du
+# process pour que le front puisse afficher le panel « Recherche terminée ».
+# Pour un outil interne 1-3 users, c'est largement suffisant.
+_scrape_states: dict[str, MutableMapping[str, Any]] = {}
 
 app = FastAPI(
     title="ScrapperGMB API",
@@ -147,6 +164,78 @@ def get_campaign(status: str | None = None) -> CampaignResponse:
 # ============================================================================
 # Historique global
 # ============================================================================
+
+# ============================================================================
+# Scrape — lancer + suivre la progression
+# ============================================================================
+
+@app.post("/api/scrapes", response_model=ScrapeStartResponse)
+def start_scrape(payload: ScrapeStartRequest) -> ScrapeStartResponse:
+    """Lance un nouveau scrape en arrière-plan.
+
+    Réutilise `start_background_scrape` qui spawn un thread daemon. Le
+    résultat (l'état mutable) est stocké dans `_scrape_states[id]` et peut
+    être récupéré via GET /api/scrapes/{id}/progress.
+    """
+    # 1. Nouvel état vierge
+    state = init_scrape_state()
+    scrape_id = uuid.uuid4().hex[:12]
+    _scrape_states[scrape_id] = state
+
+    # 2. Démarre le thread (réutilise la pipeline existante)
+    start_background_scrape(
+        state,
+        metiers=payload.metiers,
+        cities=payload.cities,
+        max_per_city=payload.max_per_city,
+        headless=payload.headless,
+        strict_city=payload.strict_city,
+        exclude_seen=True,  # toujours True côté API
+        require_phone=payload.require_phone,
+        do_vat=payload.do_vat,
+        do_bce=payload.do_bce,
+        do_fin=payload.do_fin,
+        workers=payload.workers,
+        do_credit_scoring=payload.do_credit_scoring,
+    )
+    return ScrapeStartResponse(scrape_id=scrape_id)
+
+
+@app.get("/api/scrapes/{scrape_id}/progress", response_model=ScrapeProgress)
+def get_scrape_progress(scrape_id: str) -> ScrapeProgress:
+    """Snapshot de l'état d'un scrape (polling 1.5 s côté front)."""
+    state = _scrape_states.get(scrape_id)
+    if state is None:
+        raise HTTPException(404, detail=f"Scrape {scrape_id} introuvable")
+
+    # Normalise quelques champs (datetime → str)
+    def _iso(v: Any) -> str | None:
+        if v is None:
+            return None
+        try:
+            return v.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(v)
+
+    log = state.get("log") or []
+    return ScrapeProgress(
+        scrape_id=scrape_id,
+        active=bool(state.get("active", False)),
+        phase=str(state.get("phase", "idle")),
+        started_at=_iso(state.get("started_at")),
+        ended_at=_iso(state.get("ended_at")),
+        cities_total=int(state.get("cities_total", 0)),
+        variants_total=int(state.get("variants_total", 0)),
+        prospects_brut=int(state.get("prospects_brut", 0)),
+        result_count=int(state.get("result_count", 0)),
+        vat_enriched=int(state.get("vat_enriched", 0)),
+        google_blocked=bool(state.get("google_blocked", False)),
+        error=state.get("error"),
+        log_tail=list(log[-15:]),  # 15 dernières lignes
+        losses=dict(state.get("losses") or {}),
+        result_search_id=state.get("result_search_id"),
+    )
+
 
 @app.get("/api/history", response_model=HistoryResponse)
 def get_history() -> HistoryResponse:
