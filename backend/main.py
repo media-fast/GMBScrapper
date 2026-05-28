@@ -17,14 +17,21 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from storage.history import (
+    campaign_stats,
+    get_campaign_businesses,
     get_known_businesses,
     get_search_businesses,
+    history_stats,
     list_searches,
 )
 
 from .schemas import (
     BusinessDetail,
     BusinessSummary,
+    CampaignBusiness,
+    CampaignResponse,
+    HistoryResponse,
+    HistoryStats,
     SearchBusinessesResponse,
     SearchSummary,
 )
@@ -117,3 +124,40 @@ def get_business_detail(dedup_key: str) -> BusinessDetail:
         has_credit_ai_report=bool(match.get("credit_ai_report")),
     )
     return detail
+
+
+# ============================================================================
+# Campagne d'appels
+# ============================================================================
+
+@app.get("/api/campaign", response_model=CampaignResponse)
+def get_campaign(status: str | None = None) -> CampaignResponse:
+    """Fiches dans le contexte campagne d'appels, filtrables par statut."""
+    rows = get_campaign_businesses(status=status, limit=5000)
+    items = [CampaignBusiness(**r) for r in rows]
+    # Compteurs par statut (toujours sur l'ensemble, pas le filtré)
+    stats = campaign_stats() or {}
+    return CampaignResponse(
+        items=items,
+        total=len(items),
+        status_counts=stats,
+    )
+
+
+# ============================================================================
+# Historique global
+# ============================================================================
+
+@app.get("/api/history", response_model=HistoryResponse)
+def get_history() -> HistoryResponse:
+    """Stats globales + liste des derniers scrapes pour le tab Historique."""
+    stats = history_stats() or {}
+    searches = list_searches(limit=100)
+    return HistoryResponse(
+        stats=HistoryStats(
+            total_searches=stats.get("total_searches", 0),
+            total_businesses=stats.get("total_businesses", 0),
+            total_called=stats.get("total_called", 0),
+        ),
+        searches=[SearchSummary(**s) for s in searches],
+    )

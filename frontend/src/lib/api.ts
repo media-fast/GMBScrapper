@@ -6,6 +6,8 @@
 import axios from "axios";
 import type {
   BusinessDetail,
+  CampaignResponse,
+  HistoryResponse,
   SearchBusinessesResponse,
   SearchSummary,
 } from "./types";
@@ -39,5 +41,21 @@ export async function getBusinessDetail(
   const { data } = await api.get<BusinessDetail>(
     `/businesses/${encodeURIComponent(dedupKey)}`,
   );
+  return data;
+}
+
+// ─── Campagne d'appels ───────────────────────────────────────────────
+export async function getCampaign(
+  status?: string,
+): Promise<CampaignResponse> {
+  const { data } = await api.get<CampaignResponse>("/campaign", {
+    params: status ? { status } : undefined,
+  });
+  return data;
+}
+
+// ─── Historique global ───────────────────────────────────────────────
+export async function getHistory(): Promise<HistoryResponse> {
+  const { data } = await api.get<HistoryResponse>("/history");
   return data;
 }

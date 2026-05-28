@@ -1,6 +1,6 @@
 /**
- * Page Résultats — habillée Oui Allo (cards, indigo, fonts).
- * Utilise une grille responsive 1/2/3 colonnes via CSS Grid inline.
+ * Tab Résultats — reprend exactement la logique de l'ancienne ResultsPage.
+ * Sélecteur scrape + métriques + filtres pills + recherche + grille de cards.
  */
 
 import { useMemo, useState } from "react";
@@ -15,7 +15,7 @@ import {
 } from "../components/FilterPills";
 import type { BusinessSummary } from "../lib/types";
 
-export function ResultsPage() {
+export function ResultsTab() {
   const searchesQ = useQuery({
     queryKey: ["searches"],
     queryFn: () => listSearches(100),
@@ -77,7 +77,7 @@ export function ResultsPage() {
         >
           Backend injoignable
         </div>
-        <pre style={{ fontSize: 12, color: "#7F1D1D", margin: 0 }}>
+        <pre className="mono" style={{ fontSize: 12, color: "#7F1D1D", margin: 0 }}>
           uvicorn backend.main:app --reload --port 8000
         </pre>
       </div>
@@ -85,28 +85,35 @@ export function ResultsPage() {
   }
   if (!searchesQ.data?.length) {
     return (
-      <div className="empty-state">
-        <div className="empty-state__icon">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <circle cx="12" cy="12" r="6" />
-            <circle cx="12" cy="12" r="2" />
-          </svg>
+      <>
+        <div className="empty-state">
+          <div className="empty-state__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <circle cx="12" cy="12" r="6" />
+              <circle cx="12" cy="12" r="2" />
+            </svg>
+          </div>
+          <div className="empty-state__title serif">Prêt à prospecter</div>
+          <div className="empty-state__text">
+            Lance un scrape depuis l'app Streamlit puis recharge cette page.
+          </div>
         </div>
-        <div className="empty-state__title serif">
-          Aucun scrape dans l'historique
+        <div className="oa-steps">
+          <Step num={1} title="Définis ta cible">
+            Saisis le métier (opticien, dentiste, garage…) et une liste de
+            villes dans le formulaire au-dessus.
+          </Step>
+          <Step num={2} title="Lance le scraping">
+            Google Maps + BCE/KBO + sites web sont interrogés pour récupérer
+            n° TVA, dirigeants et données financières.
+          </Step>
+          <Step num={3} title="Appelle tes prospects">
+            Push vers Ringover en un clic, click-to-call depuis chaque carte,
+            et suivi du statut.
+          </Step>
         </div>
-        <div className="empty-state__text">
-          Lance un scrape depuis l'app Streamlit (
-          <code className="mono">streamlit run app.py</code>) puis recharge
-          cette page.
-        </div>
-      </div>
+      </>
     );
   }
 
@@ -214,7 +221,8 @@ export function ResultsPage() {
             Aucune fiche ne correspond aux filtres
           </div>
           <div className="empty-state__text">
-            Réinitialise les filtres ou la recherche pour voir toutes les fiches.
+            Réinitialise les filtres ou la recherche pour voir toutes les
+            fiches.
           </div>
         </div>
       ) : (
@@ -233,8 +241,6 @@ export function ResultsPage() {
     </div>
   );
 }
-
-// ─── Métriques ────────────────────────────────────────────────────────
 
 function Metrics({
   total,
@@ -295,6 +301,24 @@ function Metric({ label, value }: { label: string; value: number }) {
       >
         {label}
       </div>
+    </div>
+  );
+}
+
+function Step({
+  num,
+  title,
+  children,
+}: {
+  num: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="oa-step">
+      <div className="oa-step__num">{num}</div>
+      <div className="oa-step__title">{title}</div>
+      <div className="oa-step__text">{children}</div>
     </div>
   );
 }

@@ -83,3 +83,36 @@ class SearchBusinessesResponse(BaseModel):
     total: int
     # Counts par credit_color pour alimenter les pills côté front
     credit_counts: dict[str, int] = Field(default_factory=dict)
+
+
+# ============================================================================
+# Campagne d'appels
+# ============================================================================
+
+class CampaignBusiness(BusinessSummary):
+    """Fiche dans le contexte campagne — avec call_notes / callback_date."""
+    call_notes: Optional[str] = None
+    last_call_at: Optional[str] = None
+    callback_date: Optional[str] = None
+
+
+class CampaignResponse(BaseModel):
+    """Liste filtrée par statut + compteurs par statut."""
+    items: list[CampaignBusiness]
+    total: int
+    status_counts: dict[str, int] = Field(default_factory=dict)
+
+
+# ============================================================================
+# Historique global (toutes fiches connues)
+# ============================================================================
+
+class HistoryStats(BaseModel):
+    total_searches: int
+    total_businesses: int
+    total_called: int
+
+
+class HistoryResponse(BaseModel):
+    stats: HistoryStats
+    searches: list[SearchSummary]

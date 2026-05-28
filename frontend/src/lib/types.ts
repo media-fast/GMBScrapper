@@ -60,3 +60,26 @@ export interface SearchBusinessesResponse {
   total: number;
   credit_counts: Partial<Record<CreditColor, number>>;
 }
+
+export interface CampaignBusiness extends BusinessSummary {
+  call_notes: string | null;
+  last_call_at: string | null;
+  callback_date: string | null;
+}
+
+export interface CampaignResponse {
+  items: CampaignBusiness[];
+  total: number;
+  status_counts: Record<string, number>;
+}
+
+export interface HistoryStats {
+  total_searches: number;
+  total_businesses: number;
+  total_called: number;
+}
+
+export interface HistoryResponse {
+  stats: HistoryStats;
+  searches: SearchSummary[];
+}
