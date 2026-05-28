@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import type { SearchSummary } from "../lib/types";
 import { formatRanAt } from "../lib/utils";
 
@@ -10,11 +9,32 @@ interface Props {
 
 export function ScrapeSelector({ searches, value, onChange }: Props) {
   return (
-    <div className="relative">
+    <div style={{ position: "relative" }}>
       <select
         value={value ?? ""}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="appearance-none bg-white border border-ink-200 rounded-lg pl-4 pr-10 py-2.5 text-sm font-medium text-ink-800 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 cursor-pointer w-full"
+        style={{
+          appearance: "none",
+          background: "var(--paper)",
+          border: "1px solid var(--ink-200)",
+          borderRadius: 10,
+          padding: "10px 36px 10px 14px",
+          fontSize: 13,
+          fontWeight: 500,
+          color: "var(--ink-900)",
+          fontFamily: "inherit",
+          cursor: "pointer",
+          width: "100%",
+          outline: "none",
+        }}
+        onFocus={(e) => {
+          e.target.style.borderColor = "var(--indigo-600)";
+          e.target.style.boxShadow = "0 0 0 3px rgba(79, 63, 240, 0.1)";
+        }}
+        onBlur={(e) => {
+          e.target.style.borderColor = "var(--ink-200)";
+          e.target.style.boxShadow = "";
+        }}
       >
         {searches.map((s) => (
           <option key={s.id} value={s.id}>
@@ -23,9 +43,23 @@ export function ScrapeSelector({ searches, value, onChange }: Props) {
           </option>
         ))}
       </select>
-      <ChevronDown
-        className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none"
-      />
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="var(--ink-400)"
+        strokeWidth="2"
+        style={{
+          position: "absolute",
+          right: 12,
+          top: "50%",
+          transform: "translateY(-50%)",
+          width: 16,
+          height: 16,
+          pointerEvents: "none",
+        }}
+      >
+        <path d="M6 9l6 6 6-6" />
+      </svg>
     </div>
   );
 }

@@ -1,32 +1,36 @@
+/**
+ * Page Résultats — habillée Oui Allo (cards, indigo, fonts).
+ * Utilise une grille responsive 1/2/3 colonnes via CSS Grid inline.
+ */
+
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
 import { getSearchBusinesses, listSearches } from "../lib/api";
 import { ScrapeSelector } from "../components/ScrapeSelector";
 import { BusinessCard } from "../components/BusinessCard";
-import { FilterPills, applyFilter, type FilterKey } from "../components/FilterPills";
+import {
+  FilterPills,
+  applyFilter,
+  type FilterKey,
+} from "../components/FilterPills";
+import type { BusinessSummary } from "../lib/types";
 
 export function ResultsPage() {
-  // ─── Liste des scrapes ──────────────────────────────────────────────
   const searchesQ = useQuery({
     queryKey: ["searches"],
     queryFn: () => listSearches(100),
   });
 
   const [activeSearchId, setActiveSearchId] = useState<number | null>(null);
-
-  // Auto-sélection du scrape le plus récent quand les données arrivent
   const effectiveSearchId =
     activeSearchId ?? (searchesQ.data?.[0]?.id ?? null);
 
-  // ─── Fiches du scrape sélectionné ───────────────────────────────────
   const businessesQ = useQuery({
     queryKey: ["businesses", effectiveSearchId],
     queryFn: () => getSearchBusinesses(effectiveSearchId!),
     enabled: effectiveSearchId !== null,
   });
 
-  // ─── Filtres + recherche ────────────────────────────────────────────
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchText, setSearchText] = useState("");
 
@@ -51,31 +55,77 @@ export function ResultsPage() {
     return list;
   }, [businessesQ.data, filter, searchText]);
 
-  // ─── États de chargement ────────────────────────────────────────────
   if (searchesQ.isLoading) {
     return (
-      <div className="text-center py-20 text-ink-500">
-        Chargement des scrapes…
+      <div className="empty-state">
+        <div className="empty-state__title serif">Chargement…</div>
       </div>
     );
   }
   if (searchesQ.error) {
     return (
-      <ErrorPanel message={`Backend injoignable. Démarre-le avec :
-uvicorn backend.main:app --reload --port 8000`} />
+      <div
+        className="card"
+        style={{
+          padding: 24,
+          border: "1px solid #FCA5A5",
+          background: "#FEF2F2",
+        }}
+      >
+        <div
+          style={{ fontWeight: 600, color: "var(--red-600)", marginBottom: 8 }}
+        >
+          Backend injoignable
+        </div>
+        <pre style={{ fontSize: 12, color: "#7F1D1D", margin: 0 }}>
+          uvicorn backend.main:app --reload --port 8000
+        </pre>
+      </div>
     );
   }
   if (!searchesQ.data?.length) {
-    return <EmptyState />;
+    return (
+      <div className="empty-state">
+        <div className="empty-state__icon">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="6" />
+            <circle cx="12" cy="12" r="2" />
+          </svg>
+        </div>
+        <div className="empty-state__title serif">
+          Aucun scrape dans l'historique
+        </div>
+        <div className="empty-state__text">
+          Lance un scrape depuis l'app Streamlit (
+          <code className="mono">streamlit run app.py</code>) puis recharge
+          cette page.
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      {/* En-tête : sélecteur de scrape */}
-      <div className="card p-5">
-        <label className="block text-xs font-semibold text-ink-500 uppercase tracking-wider mb-2">
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Sélecteur de scrape */}
+      <div className="card" style={{ padding: 20 }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--ink-500)",
+            marginBottom: 8,
+          }}
+        >
           Scrape affiché
-        </label>
+        </div>
         <ScrapeSelector
           searches={searchesQ.data}
           value={effectiveSearchId}
@@ -93,24 +143,61 @@ uvicorn backend.main:app --reload --port 8000`} />
 
       {/* Filtres + recherche */}
       {businessesQ.data && (
-        <div className="card p-5 space-y-4">
+        <div
+          className="card"
+          style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
+        >
           <FilterPills
             businesses={businessesQ.data.items}
             creditCounts={businessesQ.data.credit_counts}
             active={filter}
             onChange={setFilter}
           />
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400" />
+          <div style={{ position: "relative", maxWidth: 420 }}>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--ink-400)"
+              strokeWidth="2"
+              style={{
+                position: "absolute",
+                left: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 16,
+                height: 16,
+              }}
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
             <input
               type="text"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               placeholder="Rechercher par nom, ville ou TVA…"
-              className="w-full pl-10 pr-4 py-2 text-sm rounded-lg border border-ink-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+              style={{
+                width: "100%",
+                padding: "9px 14px 9px 38px",
+                fontSize: 13,
+                borderRadius: 10,
+                border: "1px solid var(--ink-200)",
+                outline: "none",
+                fontFamily: "inherit",
+                color: "var(--ink-900)",
+                background: "var(--paper)",
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = "var(--indigo-600)";
+                e.target.style.boxShadow = "0 0 0 3px rgba(79, 63, 240, 0.1)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "var(--ink-200)";
+                e.target.style.boxShadow = "";
+              }}
             />
           </div>
-          <div className="text-xs text-ink-500">
+          <div style={{ fontSize: 11, color: "var(--ink-500)" }}>
             {filtered.length} fiche(s) affichée(s) sur {businessesQ.data.total}
           </div>
         </div>
@@ -118,15 +205,26 @@ uvicorn backend.main:app --reload --port 8000`} />
 
       {/* Grille de cards */}
       {businessesQ.isLoading ? (
-        <div className="text-center py-20 text-ink-500">
-          Chargement des fiches…
+        <div className="empty-state">
+          <div className="empty-state__title serif">Chargement des fiches…</div>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-20 text-ink-500">
-          Aucune fiche ne correspond aux filtres.
+        <div className="empty-state">
+          <div className="empty-state__title serif">
+            Aucune fiche ne correspond aux filtres
+          </div>
+          <div className="empty-state__text">
+            Réinitialise les filtres ou la recherche pour voir toutes les fiches.
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div
+          style={{
+            display: "grid",
+            gap: 16,
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+          }}
+        >
           {filtered.map((b) => (
             <BusinessCard key={b.dedup_key} business={b} />
           ))}
@@ -136,14 +234,14 @@ uvicorn backend.main:app --reload --port 8000`} />
   );
 }
 
-// ─── Sous-composants ─────────────────────────────────────────────────
+// ─── Métriques ────────────────────────────────────────────────────────
 
 function Metrics({
   total,
   businesses,
 }: {
   total: number;
-  businesses: import("../lib/types").BusinessSummary[];
+  businesses: BusinessSummary[];
 }) {
   const top2 = businesses.filter(
     (b) => b.google_rank !== null && b.google_rank <= 2,
@@ -151,11 +249,16 @@ function Metrics({
   const withPhone = businesses.filter((b) => b.phone).length;
   const withVat = businesses.filter((b) => b.vat_number).length;
   const withMgr = businesses.filter((b) => b.managers).length;
-  const called = businesses.filter((b) => b.call_status === "Déjà appelé")
-    .length;
+  const called = businesses.filter((b) => b.call_status === "Déjà appelé").length;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+      }}
+    >
       <Metric label="Fiches" value={total} />
       <Metric label="Top 2 Google" value={top2} />
       <Metric label="Avec téléphone" value={withPhone} />
@@ -168,35 +271,30 @@ function Metrics({
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="card p-4">
-      <div className="text-2xl font-bold text-ink-900">{value}</div>
-      <div className="text-xs text-ink-500 mt-0.5">{label}</div>
-    </div>
-  );
-}
-
-function ErrorPanel({ message }: { message: string }) {
-  return (
-    <div className="card p-8 border-red-200 bg-red-50">
-      <div className="font-semibold text-red-900 mb-2">Erreur</div>
-      <pre className="text-xs text-red-800 whitespace-pre-wrap font-mono">
-        {message}
-      </pre>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="card p-12 text-center">
-      <div className="text-lg font-semibold text-ink-900 mb-2">
-        Aucun scrape dans l'historique
+    <div className="card" style={{ padding: "14px 16px" }}>
+      <div
+        className="serif"
+        style={{
+          fontSize: 24,
+          fontWeight: 600,
+          color: "var(--ink-900)",
+          lineHeight: 1,
+        }}
+      >
+        {value}
       </div>
-      <p className="text-sm text-ink-500">
-        Lance un scrape depuis l'app Streamlit (
-        <code className="text-xs">streamlit run app.py</code>) puis recharge
-        cette page.
-      </p>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: "var(--ink-500)",
+          marginTop: 6,
+        }}
+      >
+        {label}
+      </div>
     </div>
   );
 }

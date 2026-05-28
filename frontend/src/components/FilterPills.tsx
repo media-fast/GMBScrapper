@@ -1,5 +1,8 @@
+/**
+ * FilterPills — version Oui Allo (pas de Tailwind).
+ */
+
 import type { BusinessSummary, CreditColor } from "../lib/types";
-import { cn } from "../lib/utils";
 
 export type FilterKey =
   | "all"
@@ -14,13 +17,6 @@ export type FilterKey =
   | "credit_orange"
   | "credit_red"
   | "credit_gray";
-
-interface FilterDef {
-  key: FilterKey;
-  label: string;
-  count: number;
-  predicate: (b: BusinessSummary) => boolean;
-}
 
 interface Props {
   businesses: BusinessSummary[];
@@ -45,49 +41,14 @@ export function FilterPills({
   const withoutWeb = total - withWeb;
   const withoutPhone = businesses.filter((b) => !b.phone).length;
 
-  const filters: FilterDef[] = [
-    {
-      key: "all",
-      label: `Tous (${total})`,
-      count: total,
-      predicate: () => true,
-    },
-    {
-      key: "top2",
-      label: `Top 2 Google (${top2})`,
-      count: top2,
-      predicate: (b) => b.google_rank !== null && b.google_rank <= 2,
-    },
-    {
-      key: "with_vat",
-      label: `Avec TVA (${withVat})`,
-      count: withVat,
-      predicate: (b) => !!b.vat_number,
-    },
-    {
-      key: "without_vat",
-      label: `Sans TVA (${withoutVat})`,
-      count: withoutVat,
-      predicate: (b) => !b.vat_number,
-    },
-    {
-      key: "with_web",
-      label: `Avec site (${withWeb})`,
-      count: withWeb,
-      predicate: (b) => !!b.website,
-    },
-    {
-      key: "without_web",
-      label: `Sans site (${withoutWeb})`,
-      count: withoutWeb,
-      predicate: (b) => !b.website,
-    },
-    {
-      key: "without_phone",
-      label: `Sans téléphone (${withoutPhone})`,
-      count: withoutPhone,
-      predicate: (b) => !b.phone,
-    },
+  const filters: { key: FilterKey; label: string }[] = [
+    { key: "all", label: `Tous (${total})` },
+    { key: "top2", label: `Top 2 Google (${top2})` },
+    { key: "with_vat", label: `Avec TVA (${withVat})` },
+    { key: "without_vat", label: `Sans TVA (${withoutVat})` },
+    { key: "with_web", label: `Avec site (${withWeb})` },
+    { key: "without_web", label: `Sans site (${withoutWeb})` },
+    { key: "without_phone", label: `Sans téléphone (${withoutPhone})` },
   ];
 
   // Filtres crédit : seulement ceux dont count > 0
@@ -101,41 +62,55 @@ export function FilterPills({
   for (const [key, color, label] of creditFilters) {
     const n = creditCounts[color] || 0;
     if (n > 0) {
-      filters.push({
-        key,
-        label: `${label} (${n})`,
-        count: n,
-        predicate: (b) => b.credit_color === color,
-      });
+      filters.push({ key, label: `${label} (${n})` });
     }
   }
 
   return (
-    <div className="flex flex-wrap gap-2">
-      {filters.map((f) => (
-        <button
-          key={f.key}
-          type="button"
-          onClick={() => onChange(f.key)}
-          className={cn(
-            "px-3 py-1.5 rounded-full text-xs font-semibold transition",
-            "ring-1 ring-inset",
-            active === f.key
-              ? "bg-brand-700 text-white ring-brand-700 shadow-sm"
-              : "bg-white text-ink-700 ring-ink-200 hover:bg-ink-50",
-          )}
-        >
-          {f.label}
-        </button>
-      ))}
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {filters.map((f) => {
+        const isActive = active === f.key;
+        return (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => onChange(f.key)}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              transition: "all .15s ease",
+              border: "1px solid",
+              borderColor: isActive ? "var(--indigo-900)" : "var(--ink-200)",
+              background: isActive ? "var(--indigo-900)" : "var(--paper)",
+              color: isActive ? "white" : "var(--ink-700)",
+              boxShadow: isActive ? "0 2px 6px rgba(26, 14, 92, 0.15)" : "none",
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.borderColor = "var(--indigo-600)";
+                e.currentTarget.style.color = "var(--indigo-700)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.borderColor = "var(--ink-200)";
+                e.currentTarget.style.color = "var(--ink-700)";
+              }
+            }}
+          >
+            {f.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-/**
- * Helper séparé : applique le filtre actif à la liste.
- * Garde la logique groupée avec les définitions.
- */
+/** Helper séparé : applique le filtre actif à la liste. */
 export function applyFilter(
   businesses: BusinessSummary[],
   key: FilterKey,
